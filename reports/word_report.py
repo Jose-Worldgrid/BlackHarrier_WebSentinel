@@ -288,11 +288,29 @@ def add_auth_surface_summary(document, pages):
     for page in auth_pages[:20]:
         url = page.get("url")
         final_url = page.get("final_url") or url
-        forms_count = len(page.get("forms") or [])
+        forms = page.get("forms") or []
+        browser_runtime = page.get("browser_runtime") or {}
+
+        inputs = browser_runtime.get("inputs") or []
+        buttons = browser_runtime.get("buttons") or []
+
+        has_password = any("password" in str(i).lower() for i in inputs)
+        has_email = any("email" in str(i).lower() or "correo" in str(i).lower() for i in inputs)
+
+        form_type = "No detectado"
+
+        if forms:
+            form_type = "HTML clásico"
+        elif has_email and has_password:
+            form_type = "Login dinámico (React/Next/API)"
+        elif inputs:
+            form_type = "Inputs detectados sin clasificar"
 
         document.add_paragraph(
             f"Ruta detectada: {url} | URL final: {final_url} | HTTP: {page.get('status_code')} | "
-            f"Clasificación: {page.get('classification')} | Formularios HTML estáticos detectados: {forms_count}",
+            f"Clasificación: {page.get('classification')} | "
+            f"Tipo formulario: {form_type} | "
+            f"Inputs detectados: {len(inputs)} | Botones: {len(buttons)}",
             style="List Bullet",
         )
 

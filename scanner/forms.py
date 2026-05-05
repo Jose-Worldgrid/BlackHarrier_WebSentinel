@@ -439,6 +439,24 @@ def scan_forms_from_pages(pages):
         page_url = page.get("final_url") or page.get("url")
         html = page.get("html", "") or ""
 
+        browser_runtime = page.get("browser_runtime") or {}
+        runtime_inputs = browser_runtime.get("inputs") or []
+
+        # Detectar login dinámico desde runtime REAL
+        if runtime_inputs:
+            has_password = any("password" in str(f).lower() for f in runtime_inputs)
+            has_user = any("email" in str(f).lower() or "user" in str(f).lower() for f in runtime_inputs)
+
+            if has_user and has_password:
+                results.append({
+                    "control": f"Formulario dinámico detectado (Playwright) - {page_url}",
+                    "status": "Detectado",
+                    "severity": "Media",
+                    "description": "Formulario de autenticación detectado mediante renderizado real en navegador (client-side).",
+                    "evidence": f"Inputs detectados: {len(runtime_inputs)} | Tipo: login dinámico",
+                    "recommendation": "Identificar endpoint API real y ejecutar pruebas de SQLi/bypass directamente contra backend."
+                })
+
         classic_forms = extract_forms_from_html(page_url, html)
         client_side_auth_forms = detect_client_side_auth_forms(page)
         loose_input_forms = []

@@ -1,11 +1,13 @@
-import streamlit as st
-import pandas as pd
+import html
 import traceback
-from scanner.http_client import HttpClient
 from datetime import datetime
+
+import pandas as pd
+import streamlit as st
 
 from config import APP_NAME, APP_SUBTITLE, SCAN_MODES
 
+from scanner.http_client import HttpClient
 from scanner.crawler import crawl_site
 from scanner.recon import scan_recon
 from scanner.headers import scan_security_headers
@@ -24,28 +26,30 @@ from scanner.api_discovery import scan_api_discovery
 from scanner.tls_check import scan_tls
 from scanner.auth import authenticate
 from scanner.url_mapping import map_urls
-
 from scanner.tech_fingerprint import scan_technology_fingerprint
 from scanner.access_control import scan_access_control
 from scanner.dom_xss import scan_dom_xss
 from scanner.ssrf import scan_ssrf_hints
 from scanner.path_traversal import scan_path_traversal
 from scanner.dependency_exposure import scan_dependency_exposure
+from scanner.discovery import discover_surface
+from scanner.auth_sqli import scan_auth_sqli
+from scanner.ai_agent import enrich_pages_with_ai_context
+from scanner.browser_auth import extract_auth_runtime_evidence
 
 from storage.database import init_db, save_audit
 from reports.word_report import generate_word_report
-from scanner.discovery import discover_surface
-from scanner.browser_auth import scan_browser_auth_sqli
 
 
 st.set_page_config(
     page_title=APP_NAME,
     layout="wide",
     page_icon="🦅",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 init_db()
+
 
 st.markdown("""
 <style>
@@ -88,17 +92,17 @@ st.markdown("""
     }
 
     section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
-    display: none !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    max-height: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}
+        display: none !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        max-height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
 
-section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
-    display: none !important;
-}
+    section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
+        display: none !important;
+    }
 
     section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
         padding: 0 0.85rem 2rem 0.85rem !important;
@@ -129,13 +133,13 @@ section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] {
     }
 
     section[data-testid="stSidebar"] [data-testid="stImage"] {
-    margin-bottom: 0 !important;
-    padding-bottom: 0 !important;
-}
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
+    }
 
-section[data-testid="stSidebar"] [data-testid="stImage"] img {
-    margin-bottom: 0 !important;
-}
+    section[data-testid="stSidebar"] [data-testid="stImage"] img {
+        margin-bottom: 0 !important;
+    }
 
     section[data-testid="stSidebar"] h2,
     section[data-testid="stSidebar"] h3 {
@@ -274,6 +278,29 @@ section[data-testid="stSidebar"] [data-testid="stImage"] img {
         border-radius: 12px;
         overflow: hidden;
     }
+
+    .bh-attack-card {
+        background: #111827;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 14px;
+    }
+
+    .bh-finish-card {
+        background: #052e16;
+        border: 1px solid #16a34a;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 14px;
+    }
+
+    code {
+        color: #22c55e !important;
+        background: rgba(15, 23, 42, 0.9) !important;
+        border-radius: 6px;
+        padding: 2px 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -287,7 +314,7 @@ st.markdown(
         <div class="bh-divider"></div>
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
@@ -298,26 +325,47 @@ with st.sidebar:
     with logo_col_2:
         st.image("Logo_vertical.png", width="stretch")
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
+    st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---")
-
     st.header("Configuración de auditoría")
 
     audit_name = st.text_input(
         "Nombre de auditoría",
-        value=f"Auditoría Web - {datetime.now().strftime('%Y-%m-%d')}"
+        value=f"Auditoría Web - {datetime.now().strftime('%Y-%m-%d')}",
     )
 
     target_url = st.text_input(
         "URL objetivo",
-        placeholder="https://example.com"
+        placeholder="https://example.com",
     )
 
     scan_mode = st.selectbox(
         "Modo de auditoría",
         list(SCAN_MODES.keys()),
-        index=1
+        index=1,
+    )
+
+    sqli_intensity = st.selectbox(
+        "Intensidad SQLi en login",
+        [
+            "Rápida - 10 payloads",
+            "Normal - 30 payloads",
+            "Exhaustiva - todos los payloads",
+        ],
+        index=1,
+    )
+
+    if sqli_intensity.startswith("Rápida"):
+        max_auth_sqli_payloads = 10
+    elif sqli_intensity.startswith("Normal"):
+        max_auth_sqli_payloads = 30
+    else:
+        max_auth_sqli_payloads = None
+
+    visual_attack_mode = st.checkbox(
+        "Modo visual de ataque con navegador",
+        value=False,
+        help="Abre Chromium y muestra en vivo los payloads sobre formularios detectados. Más lento.",
     )
 
     use_auth = st.checkbox("Usar credenciales de login")
@@ -343,7 +391,7 @@ def normalize_results(module_name, results):
             "Severidad": item.get("severity", ""),
             "Descripción": item.get("description", ""),
             "Evidencia": item.get("evidence", ""),
-            "Recomendación": item.get("recommendation", "")
+            "Recomendación": item.get("recommendation", ""),
         }
         for item in results
     ]
@@ -361,7 +409,7 @@ def run_module(label, module_name, func, *args):
                     "severity": "Media",
                     "description": "El módulo no devolvió resultados.",
                     "evidence": "La función devolvió None.",
-                    "recommendation": "Revisar que el módulo retorne siempre una lista de resultados."
+                    "recommendation": "Revisar que el módulo retorne siempre una lista de resultados.",
                 }])
 
             return normalize_results(module_name, module_results)
@@ -373,8 +421,108 @@ def run_module(label, module_name, func, *args):
                 "severity": "Media",
                 "description": "Error durante la ejecución del módulo.",
                 "evidence": traceback.format_exc(),
-                "recommendation": "Revisar trazas, dependencias, conectividad, argumentos del módulo y alcance."
+                "recommendation": "Revisar trazas, dependencias, conectividad, argumentos del módulo y alcance.",
             }])
+
+
+def is_blocked_or_error_page(page):
+    url = str(page.get("final_url") or page.get("url") or "").lower()
+    status = str(page.get("status_code", ""))
+    html_text = " ".join([
+        str(page.get("html", "")),
+        str(page.get("rendered_html", "")),
+        str((page.get("browser_runtime") or {}).get("html", "")),
+    ]).lower()
+
+    blocked_markers = [
+        "unauthorized",
+        "acceso denegado",
+        "access denied",
+        "forbidden",
+        "no dispones de permisos",
+        "no tienes permisos",
+        "sin permisos",
+    ]
+
+    if status.startswith("4") and status not in ["401", "403"]:
+        return True
+
+    if any(marker in url for marker in ["unauthorized", "forbidden", "access-denied"]):
+        return True
+
+    if any(marker in html_text for marker in blocked_markers):
+        return True
+
+    return False
+
+
+def is_auth_attack_page(page):
+    url = str(page.get("final_url") or page.get("url") or "").lower()
+    classification = str(page.get("classification", "")).lower()
+
+    if is_blocked_or_error_page(page):
+        return False
+
+    return (
+        classification == "auth"
+        or "login" in url
+        or "signin" in url
+        or "iniciar-sesion" in url
+        or "inicio-sesion" in url
+    )
+
+
+def is_generic_attack_page(page):
+    if is_blocked_or_error_page(page):
+        return False
+
+    status = str(page.get("status_code", ""))
+    return status.startswith("2") or status.startswith("3")
+
+
+def add_browser_runtime_form_if_detected(page, runtime):
+    browser_inputs = runtime.get("inputs") or []
+    browser_buttons = runtime.get("buttons") or []
+
+    page["browser_runtime"] = runtime
+    page["browser_inputs"] = browser_inputs
+    page["browser_buttons"] = browser_buttons
+
+    has_password = any(
+        str(field.get("type", "")).lower() == "password"
+        or "password" in str(field).lower()
+        or "contraseña" in str(field).lower()
+        for field in browser_inputs
+    )
+
+    has_user = any(
+        str(field.get("type", "")).lower() in ["email", "text"]
+        or "email" in str(field).lower()
+        or "correo" in str(field).lower()
+        or "usuario" in str(field).lower()
+        or "user" in str(field).lower()
+        for field in browser_inputs
+    )
+
+    if has_user and has_password:
+        page["forms"] = page.get("forms") or []
+        page["forms"].append({
+            "source": "browser_runtime",
+            "type": "client_side_auth_form",
+            "method": "client-side/js",
+            "action": "unknown_or_api",
+            "fields": browser_inputs,
+            "buttons": browser_buttons,
+        })
+        page["classification"] = "auth"
+
+    if runtime.get("candidate_endpoints"):
+        page.setdefault("ai_context", {})
+        page["ai_context"]["candidate_endpoints"] = runtime["candidate_endpoints"]
+        page["ai_context"]["requires_api_endpoint_discovery"] = True
+
+    if runtime.get("html"):
+        page["rendered_html"] = runtime["html"]
 
 
 if run_scan:
@@ -390,11 +538,11 @@ if run_scan:
         <div class="bh-panel">
             <b>Auditoría iniciada mediante BlackHarrier Web Sentinel</b><br>
             Autor: <b>Jose</b><br>
-            Modo seleccionado: <b>{scan_mode}</b><br>
-            Objetivo: <b>{target_url}</b>
+            Modo seleccionado: <b>{html.escape(str(scan_mode))}</b><br>
+            Objetivo: <b>{html.escape(str(target_url))}</b>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     if use_auth:
@@ -410,26 +558,64 @@ if run_scan:
             target_url,
             client=auth_client,
             seed_pages=crawler_pages,
-            max_active_checks=300
+            max_active_checks=300,
         )
 
     pages = discovery["pages"]
+    pages = enrich_pages_with_ai_context(pages)
     discovered_urls = discovery["discovered"]
+
+    runtime_candidates = [
+        page for page in pages
+        if page.get("ai_context", {}).get("page_type") == "auth"
+        or page.get("ai_context", {}).get("requires_browser_dom")
+    ]
+
+    if runtime_candidates:
+        st.info(f"Analizando DOM dinámico con navegador en {len(runtime_candidates)} URL(s)...")
+        dom_progress = st.progress(0)
+        dom_status_box = st.empty()
+
+        for index, page in enumerate(runtime_candidates, start=1):
+            page_url = page.get("final_url") or page.get("url")
+            dom_status_box.write(f"Renderizando con Playwright: `{page_url}`")
+
+            try:
+                runtime = extract_auth_runtime_evidence(
+                    page_url,
+                    headless=True,
+                    timeout_ms=8000,
+                )
+            except Exception as exc:
+                runtime = {
+                    "ok": False,
+                    "url": page_url,
+                    "candidate_endpoints": [],
+                    "inputs": [],
+                    "buttons": [],
+                    "network_events": [],
+                    "html": "",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+            add_browser_runtime_form_if_detected(page, runtime)
+            dom_progress.progress(index / len(runtime_candidates))
+
+        dom_status_box.write("Análisis dinámico con navegador finalizado.")
+    else:
+        st.info("No se detectaron páginas que requieran análisis DOM dinámico.")
 
     st.success(
         f"URLs HTML analizadas: {len(pages)} | "
         f"URLs procesadas por discovery: {len(discovered_urls)}"
     )
 
-    all_results.extend(normalize_results(
-        "Discovery",
-        discovery["results"]
-    ))
+    all_results.extend(normalize_results("Discovery", discovery["results"]))
 
     all_results.extend(run_module("Mapeando URLs asociadas...", "Mapa de URLs", map_urls, target_url, pages, auth_client))
     all_results.extend(run_module("Reconocimiento tecnológico...", "Reconocimiento", scan_recon, target_url))
     all_results.extend(run_module("Validando TLS/HTTPS...", "TLS/HTTPS", scan_tls, target_url))
-    all_results.extend(run_module("Analizando cabeceras...","Cabeceras de seguridad",scan_security_headers,target_url,auth_client))
+    all_results.extend(run_module("Analizando cabeceras...", "Cabeceras de seguridad", scan_security_headers, target_url, auth_client))
     all_results.extend(run_module("Analizando cookies...", "Cookies", scan_cookies, target_url))
     all_results.extend(run_module("Analizando CORS...", "CORS", scan_cors, target_url))
     all_results.extend(run_module("Analizando métodos HTTP...", "Métodos HTTP", scan_http_methods, target_url))
@@ -438,25 +624,182 @@ if run_scan:
     all_results.extend(run_module("Descubriendo APIs...", "API Discovery", scan_api_discovery, target_url, pages))
     all_results.extend(run_module("Analizando formularios...", "Formularios", scan_forms_from_pages, pages))
     all_results.extend(run_module("Analizando CSRF...", "CSRF", scan_csrf_from_pages, pages))
-    all_results.extend(run_module("Probando XSS reflejado...", "XSS reflejado", scan_reflected_xss_pages, pages))
-    all_results.extend(run_module("Probando SQL Injection...", "SQL Injection", scan_sqli_pages, pages))
+
+    attackable_pages = [page for page in pages if is_generic_attack_page(page)]
+    auth_attack_pages = [page for page in pages if is_auth_attack_page(page)]
+
+    st.markdown("### Ejecución ofensiva en tiempo real")
+    attack_status = st.empty()
+    attack_progress = st.empty()
+    st.markdown("### Login detectado / simulación visual del ataque")
+
+    visual_login_box = st.empty()
+
+    def attack_progress_event(event):
+        current = int(event.get("current", 0))
+        total = max(int(event.get("total", 1)), 1)
+
+        endpoints = event.get("candidate_endpoints", [])
+        raw_target = event.get("target", event.get("login_url", ""))
+        if endpoints:
+            raw_target = endpoints[0]
+
+        phase_raw = str(event.get("phase", "Ataque"))
+        technique_raw = str(event.get("technique", ""))
+        target_raw = str(raw_target)
+        field_raw = str(event.get("field", ""))
+        payload_raw = str(event.get("payload", ""))
+        detail_raw = str(event.get("detail", ""))
+
+        phase = html.escape(phase_raw)
+        technique = html.escape(technique_raw)
+        target = html.escape(target_raw)
+        field = html.escape(field_raw)
+        payload = html.escape(payload_raw)
+        detail = html.escape(detail_raw)
+
+        attack_progress.progress(min(current / total, 1.0))
+
+        field_line = f"<b>Campo/parámetro:</b> <code>{field}</code><br>" if field else ""
+
+        attack_status.markdown(
+            f"""
+            <div class="bh-attack-card">
+                <b>Fase:</b> {phase}<br>
+                <b>Técnica:</b> {technique}<br>
+                <b>Objetivo:</b> <code>{target}</code><br>
+                {field_line}
+                <b>Payload:</b> <code>{payload}</code><br>
+                <b>Detalle:</b> {detail}<br>
+                <b>Progreso:</b> {current}/{total}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        visual_field = field_raw.lower() or "email"
+
+        email_value = payload_raw
+        password_value = payload_raw if "password" in visual_field or "contraseña" in visual_field else ""
+
+        visual_login_box.markdown(
+            f"""
+            <div style="
+                background:#f8fafc;
+                color:#111827;
+                border-radius:18px;
+                padding:28px;
+                max-width:540px;
+                border:4px solid #ef4444;
+                box-shadow:0 18px 45px rgba(0,0,0,0.35);
+                margin-bottom:22px;
+            ">
+                <h2 style="margin:0 0 6px 0;color:#374151;">Iniciar sesión</h2>
+                <p style="margin:0 0 22px 0;color:#6b7280;">
+                    BlackHarrier está probando payloads sobre el login detectado
+                </p>
+
+                <label style="font-weight:700;color:#374151;">Email / Usuario</label>
+                <div style="
+                    margin:8px 0 18px 0;
+                    padding:12px;
+                    border:2px solid #ef4444;
+                    border-radius:8px;
+                    background:#fff;
+                    font-family:monospace;
+                    color:#111827;
+                    min-height:24px;
+                ">
+                    {html.escape(email_value)}
+                </div>
+
+                <label style="font-weight:700;color:#374151;">Contraseña</label>
+                <div style="
+                    margin:8px 0 22px 0;
+                    padding:12px;
+                    border:2px solid #ef4444;
+                    border-radius:8px;
+                    background:#fff;
+                    font-family:monospace;
+                    color:#111827;
+                    min-height:24px;
+                ">
+                    {html.escape(password_value) if password_value else "••••••••"}
+                </div>
+
+                <div style="
+                    text-align:center;
+                    background:#22c55e;
+                    color:#052e16;
+                    padding:12px;
+                    border-radius:999px;
+                    font-weight:900;
+                ">
+                    Iniciar sesión
+                </div>
+
+                <p style="margin-top:18px;font-size:13px;color:#6b7280;">
+                    Técnica: <b>{technique}</b><br>
+                    Objetivo: <code>{target}</code><br>
+                    Progreso: <b>{current}/{total}</b>
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    def attack_finished(message):
+        attack_progress.empty()
+        attack_status.markdown(
+            f"""
+            <div class="bh-finish-card">
+                <b>{html.escape(str(message))}</b>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     all_results.extend(run_module(
-        "Explotando autenticación (SQLi + bypass con navegador)...",
-        "SQL Injection Auth (Browser)",
-        scan_browser_auth_sqli,
-        pages,
-        None,   # max_payloads = None → TODA la wordlist
-        True    # headless
+        "Probando XSS reflejado...",
+        "XSS reflejado",
+        scan_reflected_xss_pages,
+        attackable_pages,
+        attack_progress_event,
     ))
-    all_results.extend(run_module("Probando Open Redirect...", "Open Redirect", scan_open_redirect_pages, pages))
-    all_results.extend(run_module("Analizando JWT expuestos...", "JWT", scan_jwt_from_pages, pages))
+
+    all_results.extend(run_module(
+        "Probando SQL Injection...",
+        "SQL Injection",
+        scan_sqli_pages,
+        attackable_pages,
+        attack_progress_event,
+    ))
+
+    with st.spinner(f"Probando SQLi en autenticación ({sqli_intensity})..."):
+        auth_sqli_results = scan_auth_sqli(
+            pages=auth_attack_pages,
+            client=auth_client,
+            max_payloads=max_auth_sqli_payloads,
+            headless=not visual_attack_mode,
+            progress_callback=attack_progress_event,
+        )
+
+    all_results.extend(normalize_results(
+        "SQL Injection Auth (Browser)",
+        auth_sqli_results,
+    ))
+
+    attack_finished("Ejecución ofensiva finalizada.")
+
+    all_results.extend(run_module("Probando Open Redirect...", "Open Redirect", scan_open_redirect_pages, attackable_pages))
+    all_results.extend(run_module("Analizando JWT expuestos...", "JWT", scan_jwt_from_pages, attackable_pages))
 
     all_results.extend(run_module(
         "Fingerprinting avanzado de tecnologías...",
         "Fingerprinting avanzado",
         scan_technology_fingerprint,
         target_url,
-        pages
+        pages,
     ))
 
     all_results.extend(run_module(
@@ -465,46 +808,49 @@ if run_scan:
         scan_access_control,
         target_url,
         pages,
-        auth_client
+        auth_client,
     ))
 
     all_results.extend(run_module(
         "Analizando XSS DOM/frontend...",
         "XSS DOM",
         scan_dom_xss,
-        pages
+        attackable_pages,
     ))
 
     all_results.extend(run_module(
         "Analizando posibles SSRF...",
         "SSRF",
         scan_ssrf_hints,
-        pages
+        attackable_pages,
     ))
 
     all_results.extend(run_module(
         "Analizando path traversal...",
         "Path Traversal",
         scan_path_traversal,
-        pages
+        attackable_pages,
     ))
 
     all_results.extend(run_module(
         "Analizando exposición de runtime/dependencias...",
         "Exposición de dependencias",
         scan_dependency_exposure,
-        target_url
+        target_url,
     ))
 
     df = pd.DataFrame(all_results)
+
+    st.session_state["last_audit_df"] = df
+    st.session_state["last_audit_results"] = all_results
+    st.session_state["last_audit_pages"] = pages
+    st.session_state["last_audit_discovery"] = discovery
 
     st.subheader("Resultados")
     finding_statuses = ["Hallazgo", "Posible hallazgo"]
     total_checks = len(df)
     total_findings = len(df[df["Resultado"].isin(finding_statuses)])
     total_errors = len(df[df["Resultado"] == "Error"])
-    high_critical = len(df[df["Resultado"].isin(finding_statuses) & df["Severidad"].isin(["Crítica", "Alta"])
-    ])
 
     pages_count = len(pages)
 
@@ -518,12 +864,20 @@ if run_scan:
     st.dataframe(df, width="stretch")
 
     st.subheader("Resumen por severidad")
-    severity_summary = df[df["Resultado"].isin(finding_statuses)]["Severidad"].value_counts().reset_index()
+    severity_summary = (
+        df[df["Resultado"].isin(finding_statuses)]["Severidad"]
+        .value_counts()
+        .reset_index()
+    )
     severity_summary.columns = ["Severidad", "Cantidad"]
     st.dataframe(severity_summary, width="stretch")
 
     st.subheader("Resumen por módulo")
-    module_summary = df.groupby(["Módulo", "Resultado", "Severidad"]).size().reset_index(name="Cantidad")
+    module_summary = (
+        df.groupby(["Módulo", "Resultado", "Severidad"])
+        .size()
+        .reset_index(name="Cantidad")
+    )
     st.dataframe(module_summary, width="stretch")
 
     save_audit(audit_name, target_url, all_results)
@@ -535,12 +889,32 @@ if run_scan:
         pages=pages,
         discovery=discovery,
         pages_count=len(pages),
-        scan_mode=scan_mode
+        scan_mode=scan_mode,
     )
+
+    st.session_state["last_report_path"] = report_path
+
     with open(report_path, "rb") as file:
         st.download_button(
             label="Descargar informe Word",
             data=file,
             file_name=report_path.split("/")[-1],
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            on_click="ignore",
         )
+elif st.session_state.get("last_audit_df") is not None:
+    df = st.session_state["last_audit_df"]
+    report_path = st.session_state.get("last_report_path")
+
+    st.subheader("Resultados de la última auditoría")
+    st.dataframe(df, width="stretch")
+
+    if report_path:
+        with open(report_path, "rb") as file:
+            st.download_button(
+                label="Descargar último informe Word",
+                data=file,
+                file_name=report_path.split("/")[-1],
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                on_click="ignore",
+            )
