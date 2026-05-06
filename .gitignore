@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+audit_results.db
+venv/
