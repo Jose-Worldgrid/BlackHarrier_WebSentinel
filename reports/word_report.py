@@ -88,6 +88,102 @@ def is_reportable_page(page):
     return False
 
 
+def get_form_detection_summary(page):
+    forms = page.get("forms") or []
+    browser_runtime = page.get("browser_runtime") or {}
+    inputs = browser_runtime.get("inputs") or page.get("browser_inputs") or []
+    buttons = browser_runtime.get("buttons") or page.get("browser_buttons") or []
+
+    has_runtime_auth_form = any(
+        "password" in str(field).lower() or "contraseña" in str(field).lower()
+        for field in inputs
+    ) and any(
+        "email" in str(field).lower()
+        or "correo" in str(field).lower()
+        or "user" in str(field).lower()
+        or "usuario" in str(field).lower()
+        or "login" in str(field).lower()
+        for field in inputs
+    )
+
+    has_browser_form = any(
+        isinstance(form, dict)
+        and (
+            str(form.get("source", "")) == "browser_runtime"
+            or str(form.get("type", "")) == "client_side_auth_form"
+            or str(form.get("method", "")).lower() == "client-side/js"
+        )
+        for form in forms
+    )
+
+    html_forms = [
+        form for form in forms
+        if not (
+            isinstance(form, dict)
+            and (
+                str(form.get("source", "")) == "browser_runtime"
+                or str(form.get("type", "")) == "client_side_auth_form"
+                or str(form.get("method", "")).lower() == "client-side/js"
+            )
+        )
+    ]
+
+    if has_runtime_auth_form or has_browser_form:
+        form_type = "Formulario dinámico detectado con Playwright"
+    elif html_forms:
+        form_type = "Formulario HTML clásico"
+    elif inputs:
+        form_type = "Inputs renderizados sin clasificar"
+    else:
+        form_type = "No detectado"
+
+    return {
+        "forms_count": max(len(forms), 1 if (has_runtime_auth_form or has_browser_form) else 0),
+        "form_type": form_type,
+        "inputs_count": len(inputs),
+        "buttons_count": len(buttons),
+        "has_runtime_auth_form": has_runtime_auth_form,
+        "has_browser_form": has_browser_form,
+        "has_html_form": bool(html_forms),
+    }
+
+
+def get_page_observation(page):
+    classification = safe_text(page.get("classification", "sin clasificar"))
+    form_summary = get_form_detection_summary(page)
+    forms_count = form_summary["forms_count"]
+
+    if classification in ["auth", "registration"]:
+        if forms_count:
+            return f"Ruta compatible con autenticación/registro. {form_summary['form_type']}."
+        return "Ruta compatible con autenticación/registro sin formulario renderizado; revisar JavaScript y endpoints API."
+
+    if classification == "protected_redirect_to_auth":
+        return "Ruta sensible que redirige a autenticación. Revisar control de acceso tras login."
+
+    if classification == "protected":
+        return "Ruta protegida detectada. Revisar autorización y exposición."
+
+    if classification == "admin_candidate":
+        if forms_count:
+            return f"Ruta administrativa candidata. Presenta pantalla/control de autenticación: {form_summary['form_type']}."
+        return "Ruta administrativa candidata a revisión de control de acceso."
+
+    if classification == "api_candidate":
+        return "Ruta candidata a API; revisar métodos, autenticación y errores."
+
+    if classification == "sensitive_candidate":
+        return "Ruta sensible candidata; revisar exposición de secretos, backups o configuración."
+
+    if classification == "server_error":
+        return "Error 5xx detectado; revisar filtrado de información técnica."
+
+    if classification == "error_disclosure_candidate":
+        return "Respuesta con indicadores de error técnico o posible disclosure."
+
+    return "Elemento relevante identificado para revisión manual."
+
+
 def sort_results(results):
     return sorted(
         results,
@@ -126,7 +222,7 @@ def add_title_page(document, audit_name, target_url, scan_mode=None, pages_count
     add_logo(document)
 
     title = document.add_heading(
-        "RESULTADOS DEL ANÁLISIS DE SEGURIDAD WEB MEDIANTE BLACKHARRIER WEB SENTINEL",
+        "INFORME TÉCNICO DE AUDITORÍA DE SEGURIDAD WEB - BLACKHARRIER WEB SENTINEL",
         0,
     )
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -211,33 +307,9 @@ def add_discovered_surface(document, pages):
         final_url = safe_text(page.get("final_url") or url)
         status_code = safe_text(page.get("status_code"))
         classification = safe_text(page.get("classification", "sin clasificar"))
-        forms = page.get("forms") or []
-        forms_count = len(forms)
-
-        observation = ""
-
-        if classification in ["auth", "registration"]:
-            if forms_count == 0:
-                observation = (
-                    "Ruta compatible con autenticación/registro. No se detectó formulario HTML estático; "
-                    "probable renderizado cliente o envío vía API."
-                )
-            else:
-                observation = "Ruta compatible con autenticación/registro con formulario HTML detectado."
-        elif classification == "protected_redirect_to_auth":
-            observation = "Ruta sensible que redirige a autenticación. Revisar control de acceso tras login."
-        elif classification == "protected":
-            observation = "Ruta protegida detectada. Revisar autorización y exposición."
-        elif classification == "admin_candidate":
-            observation = "Ruta administrativa candidata a revisión de control de acceso."
-        elif classification == "api_candidate":
-            observation = "Ruta candidata a API; revisar métodos, autenticación y errores."
-        elif classification == "sensitive_candidate":
-            observation = "Ruta sensible candidata; revisar exposición de secretos, backups o configuración."
-        elif classification == "server_error":
-            observation = "Error 5xx detectado; revisar filtrado de información técnica."
-        elif classification == "error_disclosure_candidate":
-            observation = "Respuesta con indicadores de error técnico o posible disclosure."
+        form_summary = get_form_detection_summary(page)
+        forms_count = form_summary["forms_count"]
+        observation = get_page_observation(page)
 
         row = table.add_row().cells
         row[0].text = truncate(url, 120)
@@ -288,29 +360,14 @@ def add_auth_surface_summary(document, pages):
     for page in auth_pages[:20]:
         url = page.get("url")
         final_url = page.get("final_url") or url
-        forms = page.get("forms") or []
-        browser_runtime = page.get("browser_runtime") or {}
-
-        inputs = browser_runtime.get("inputs") or []
-        buttons = browser_runtime.get("buttons") or []
-
-        has_password = any("password" in str(i).lower() for i in inputs)
-        has_email = any("email" in str(i).lower() or "correo" in str(i).lower() for i in inputs)
-
-        form_type = "No detectado"
-
-        if forms:
-            form_type = "HTML clásico"
-        elif has_email and has_password:
-            form_type = "Login dinámico (React/Next/API)"
-        elif inputs:
-            form_type = "Inputs detectados sin clasificar"
+        form_summary = get_form_detection_summary(page)
 
         document.add_paragraph(
             f"Ruta detectada: {url} | URL final: {final_url} | HTTP: {page.get('status_code')} | "
             f"Clasificación: {page.get('classification')} | "
-            f"Tipo formulario: {form_type} | "
-            f"Inputs detectados: {len(inputs)} | Botones: {len(buttons)}",
+            f"Tipo formulario: {form_summary['form_type']} | "
+            f"Formularios detectados: {form_summary['forms_count']} | "
+            f"Inputs renderizados: {form_summary['inputs_count']} | Botones/enlaces: {form_summary['buttons_count']}",
             style="List Bullet",
         )
 
@@ -427,16 +484,17 @@ def add_test_path_summary(document, pages=None, pages_count=None):
 
     if auth_pages:
         for page in auth_pages[:10]:
-            forms_count = len(page.get("forms") or [])
+            form_summary = get_form_detection_summary(page)
+            forms_count = form_summary["forms_count"]
             statements.append(
                 f"Durante discovery se identificó la ruta {page.get('url')} "
                 f"clasificada como {page.get('classification')}, con código HTTP {page.get('status_code')} "
-                f"y {forms_count} formulario(s) HTML estático(s) detectado(s)."
+                f"y {forms_count} formulario(s) detectado(s) ({form_summary['form_type']})."
             )
 
             if forms_count == 0:
                 statements.append(
-                    "Al no detectarse formulario HTML estático, se considera probable que el flujo de autenticación "
+                    "Al no detectarse formulario renderizado, se considera probable que el flujo de autenticación "
                     "esté renderizado en cliente o use endpoints API. Se recomienda análisis de JavaScript, "
                     "interceptación con navegador/headless y pruebas autenticadas."
                 )

@@ -1,10 +1,14 @@
 from collections import deque
+import logging
 from urllib.parse import urljoin, urlparse, urldefrag, parse_qs
 import re
 
 from bs4 import BeautifulSoup
 
 from scanner.http_client import HttpClient
+
+
+logger = logging.getLogger(__name__)
 
 
 BINARY_EXTENSIONS = (
@@ -199,7 +203,7 @@ def seed_common_paths(base_url: str) -> deque:
 
 
 def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_limit: int = 5000):
-    client = client or HttpClient(verify_ssl=False)
+    client = client or HttpClient()
 
     base_url = normalize_url(client.normalize_url(base_url))
     origin = get_origin(base_url)
@@ -214,7 +218,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
             break
 
         if len(visited) >= hard_limit:
-            print(f"[CRAWLER SAFETY STOP] hard_limit alcanzado: {hard_limit}")
+            logger.warning("Crawler safety stop reached hard_limit=%s", hard_limit)
             break
 
         current = normalize_url(queued.popleft())
@@ -233,19 +237,18 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
         try:
             response = client.get(current)
         except Exception as exc:
-            print(f"[CRAWLER ERROR] {current} -> {type(exc).__name__}: {exc}")
+            logger.warning("Crawler request failed for %s: %s: %s", current, type(exc).__name__, exc)
             continue
 
         html_text = response.text or ""
         content_type = response.headers.get("Content-Type", "")
 
-        print(
-            "[CRAWLER RESPONSE]",
+        logger.debug(
+            "Crawler response %s status=%s type=%s len=%s",
             current,
             response.status_code,
             content_type,
-            "len=",
-            len(html_text)
+            len(html_text),
         )
 
         final_url = normalize_url(response.url or current)
@@ -279,13 +282,11 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
 
         extracted_links = extract_links(final_url, html_text)
 
-        print(
-            "[CRAWLER LINKS]",
+        logger.debug(
+            "Crawler extracted links for %s links=%s forms=%s",
             final_url,
-            "links=",
             len(extracted_links),
-            "forms=",
-            len(forms)
+            len(forms),
         )
 
         for absolute in extracted_links:
@@ -307,20 +308,19 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
             if absolute not in visited and absolute not in queued:
                 queued.append(absolute)
 
-    print("[CRAWLER FINAL PAGES]", len(pages))
+    logger.info("Crawler finished pages=%s", len(pages))
     for page in pages[:20]:
-        print(
-            "[PAGE]",
+        logger.debug(
+            "Crawler page status=%s class=%s url=%s forms=%s",
             page.get("status_code"),
             page.get("classification"),
             page.get("url"),
-            "forms=",
-            len(page.get("forms", []))
+            len(page.get("forms", [])),
         )
 
     if discovered_resources:
-        print("[CRAWLER RESOURCES]", len(discovered_resources))
+        logger.info("Crawler discovered resources=%s", len(discovered_resources))
         for resource in list(sorted(discovered_resources))[:20]:
-            print("[RESOURCE]", resource)
+            logger.debug("Crawler resource %s", resource)
 
     return pages

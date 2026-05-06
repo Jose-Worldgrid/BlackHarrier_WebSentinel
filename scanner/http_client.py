@@ -8,11 +8,29 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+DEFAULT_TIMEOUT = 15
+DEFAULT_DELAY = 0.35
+DEFAULT_VERIFY_SSL = True
+
+
+def configure_defaults(timeout=None, delay=None, verify_ssl=None):
+    global DEFAULT_TIMEOUT, DEFAULT_DELAY, DEFAULT_VERIFY_SSL
+
+    if timeout is not None:
+        DEFAULT_TIMEOUT = timeout
+
+    if delay is not None:
+        DEFAULT_DELAY = delay
+
+    if verify_ssl is not None:
+        DEFAULT_VERIFY_SSL = verify_ssl
+
+
 class HttpClient:
-    def __init__(self, timeout=15, delay=0.35, verify_ssl=False):
-        self.timeout = timeout
-        self.delay = delay
-        self.verify_ssl = verify_ssl
+    def __init__(self, timeout=None, delay=None, verify_ssl=None):
+        self.timeout = DEFAULT_TIMEOUT if timeout is None else timeout
+        self.delay = DEFAULT_DELAY if delay is None else delay
+        self.verify_ssl = DEFAULT_VERIFY_SSL if verify_ssl is None else verify_ssl
         self.session = requests.Session()
 
         self.session.headers.update({

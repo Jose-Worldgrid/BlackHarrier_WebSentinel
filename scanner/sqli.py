@@ -156,15 +156,21 @@ def mutate_url_param(url, payload):
     return urlunparse(parsed._replace(query=urlencode(mutated, doseq=True)))
 
 
-def scan_sqli_pages(pages):
+def scan_sqli_pages(pages, max_payloads=None):
     client = HttpClient()
     results = []
+    error_payloads = ERROR_PAYLOADS
+    boolean_tests = BOOLEAN_TESTS
+
+    if max_payloads is not None:
+        error_payloads = error_payloads[:max_payloads]
+        boolean_tests = boolean_tests[:max_payloads]
 
     for page in pages:
         forms = extract_forms_from_html(page["url"], page["html"])
 
         for form in forms:
-            for payload in ERROR_PAYLOADS:
+            for payload in error_payloads:
                 try:
                     response = submit_form(client, form, payload)
                     if not response:
@@ -192,7 +198,7 @@ def scan_sqli_pages(pages):
                         "recommendation": "Revisar conectividad y comportamiento del formulario."
                     })
 
-            for test in BOOLEAN_TESTS:
+            for test in boolean_tests:
                 try:
                     true_response = submit_form(client, form, test["true"])
                     false_response = submit_form(client, form, test["false"])
@@ -215,7 +221,7 @@ def scan_sqli_pages(pages):
                 except Exception:
                     pass
 
-        for payload in ERROR_PAYLOADS:
+        for payload in error_payloads:
             try:
                 test_url = mutate_url_param(page["url"], payload)
                 if not test_url:

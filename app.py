@@ -7,7 +7,7 @@ import streamlit as st
 
 from config import APP_NAME, APP_SUBTITLE, SCAN_MODES
 
-from scanner.http_client import HttpClient
+from scanner.http_client import HttpClient, configure_defaults
 from scanner.crawler import crawl_site
 from scanner.recon import scan_recon
 from scanner.headers import scan_security_headers
@@ -345,6 +345,12 @@ with st.sidebar:
         index=1,
     )
 
+    verify_ssl = st.checkbox(
+        "Validar certificados SSL/TLS",
+        value=True,
+        help="Recomendado: activado. Desactívalo solo en entornos de prueba autorizados con certificados no confiables.",
+    )
+
     sqli_intensity = st.selectbox(
         "Intensidad SQLi en login",
         [
@@ -361,12 +367,6 @@ with st.sidebar:
         max_auth_sqli_payloads = 30
     else:
         max_auth_sqli_payloads = None
-
-    visual_attack_mode = st.checkbox(
-        "Modo visual de ataque con navegador",
-        value=False,
-        help="Abre Chromium y muestra en vivo los payloads sobre formularios detectados. Más lento.",
-    )
 
     use_auth = st.checkbox("Usar credenciales de login")
 
@@ -395,6 +395,11 @@ def normalize_results(module_name, results):
         }
         for item in results
     ]
+
+
+def resolve_payload_limit(*limits):
+    valid_limits = [limit for limit in limits if isinstance(limit, int) and limit > 0]
+    return min(valid_limits) if valid_limits else None
 
 
 def run_module(label, module_name, func, *args):
@@ -506,15 +511,29 @@ def add_browser_runtime_form_if_detected(page, runtime):
 
     if has_user and has_password:
         page["forms"] = page.get("forms") or []
-        page["forms"].append({
-            "source": "browser_runtime",
-            "type": "client_side_auth_form",
-            "method": "client-side/js",
-            "action": "unknown_or_api",
-            "fields": browser_inputs,
-            "buttons": browser_buttons,
-        })
-        page["classification"] = "auth"
+
+        already_added = any(
+            isinstance(form, dict) and str(form.get("source", "")) == "browser_runtime"
+            for form in page["forms"]
+        )
+
+        if not already_added:
+            page["forms"].append({
+                "source": "browser_runtime",
+                "type": "client_side_auth_form",
+                "method": "client-side/js",
+                "action": "unknown_or_api",
+                "fields": browser_inputs,
+                "buttons": browser_buttons,
+            })
+
+        current_classification = str(page.get("classification", "")).lower()
+        url = str(page.get("final_url") or page.get("url") or "").lower()
+
+        if "admin" in url:
+            page["classification"] = "admin_candidate"
+        elif current_classification in ["auth", "html_candidate", ""]:
+            page["classification"] = "auth"
 
     if runtime.get("candidate_endpoints"):
         page.setdefault("ai_context", {})
@@ -531,7 +550,15 @@ if run_scan:
         st.stop()
 
     all_results = []
-    auth_client = HttpClient(verify_ssl=False)
+    scan_profile = SCAN_MODES.get(scan_mode, {})
+    scan_delay = float(scan_profile.get("delay", 0.35))
+    scan_payload_limit = scan_profile.get("max_payloads")
+    is_aggressive_mode = bool(scan_profile.get("aggressive", False))
+
+    effective_auth_payload_limit = resolve_payload_limit(scan_payload_limit, max_auth_sqli_payloads)
+
+    configure_defaults(delay=scan_delay, verify_ssl=verify_ssl)
+    auth_client = HttpClient()
 
     st.markdown(
         f"""
@@ -547,7 +574,7 @@ if run_scan:
 
     if use_auth:
         auth_client, auth_results = authenticate(login_url, username, password)
-        auth_client.verify_ssl = False
+        auth_client.verify_ssl = verify_ssl
         all_results.extend(normalize_results("Autenticación", auth_results))
 
     with st.spinner("Ejecutando crawling completo..."):
@@ -558,7 +585,7 @@ if run_scan:
             target_url,
             client=auth_client,
             seed_pages=crawler_pages,
-            max_active_checks=300,
+            max_active_checks=500 if is_aggressive_mode else 300,
         )
 
     pages = discovery["pages"]
@@ -631,9 +658,6 @@ if run_scan:
     st.markdown("### Ejecución ofensiva en tiempo real")
     attack_status = st.empty()
     attack_progress = st.empty()
-    st.markdown("### Login detectado / simulación visual del ataque")
-
-    visual_login_box = st.empty()
 
     def attack_progress_event(event):
         current = int(event.get("current", 0))
@@ -644,19 +668,12 @@ if run_scan:
         if endpoints:
             raw_target = endpoints[0]
 
-        phase_raw = str(event.get("phase", "Ataque"))
-        technique_raw = str(event.get("technique", ""))
-        target_raw = str(raw_target)
-        field_raw = str(event.get("field", ""))
-        payload_raw = str(event.get("payload", ""))
-        detail_raw = str(event.get("detail", ""))
-
-        phase = html.escape(phase_raw)
-        technique = html.escape(technique_raw)
-        target = html.escape(target_raw)
-        field = html.escape(field_raw)
-        payload = html.escape(payload_raw)
-        detail = html.escape(detail_raw)
+        phase = html.escape(str(event.get("phase", "Ataque")))
+        technique = html.escape(str(event.get("technique", "")))
+        target = html.escape(str(raw_target))
+        field = html.escape(str(event.get("field", "")))
+        payload = html.escape(str(event.get("payload", "")))
+        detail = html.escape(str(event.get("detail", "")))
 
         attack_progress.progress(min(current / total, 1.0))
 
@@ -672,77 +689,6 @@ if run_scan:
                 <b>Payload:</b> <code>{payload}</code><br>
                 <b>Detalle:</b> {detail}<br>
                 <b>Progreso:</b> {current}/{total}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        visual_field = field_raw.lower() or "email"
-
-        email_value = payload_raw
-        password_value = payload_raw if "password" in visual_field or "contraseña" in visual_field else ""
-
-        visual_login_box.markdown(
-            f"""
-            <div style="
-                background:#f8fafc;
-                color:#111827;
-                border-radius:18px;
-                padding:28px;
-                max-width:540px;
-                border:4px solid #ef4444;
-                box-shadow:0 18px 45px rgba(0,0,0,0.35);
-                margin-bottom:22px;
-            ">
-                <h2 style="margin:0 0 6px 0;color:#374151;">Iniciar sesión</h2>
-                <p style="margin:0 0 22px 0;color:#6b7280;">
-                    BlackHarrier está probando payloads sobre el login detectado
-                </p>
-
-                <label style="font-weight:700;color:#374151;">Email / Usuario</label>
-                <div style="
-                    margin:8px 0 18px 0;
-                    padding:12px;
-                    border:2px solid #ef4444;
-                    border-radius:8px;
-                    background:#fff;
-                    font-family:monospace;
-                    color:#111827;
-                    min-height:24px;
-                ">
-                    {html.escape(email_value)}
-                </div>
-
-                <label style="font-weight:700;color:#374151;">Contraseña</label>
-                <div style="
-                    margin:8px 0 22px 0;
-                    padding:12px;
-                    border:2px solid #ef4444;
-                    border-radius:8px;
-                    background:#fff;
-                    font-family:monospace;
-                    color:#111827;
-                    min-height:24px;
-                ">
-                    {html.escape(password_value) if password_value else "••••••••"}
-                </div>
-
-                <div style="
-                    text-align:center;
-                    background:#22c55e;
-                    color:#052e16;
-                    padding:12px;
-                    border-radius:999px;
-                    font-weight:900;
-                ">
-                    Iniciar sesión
-                </div>
-
-                <p style="margin-top:18px;font-size:13px;color:#6b7280;">
-                    Técnica: <b>{technique}</b><br>
-                    Objetivo: <code>{target}</code><br>
-                    Progreso: <b>{current}/{total}</b>
-                </p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -764,7 +710,7 @@ if run_scan:
         "XSS reflejado",
         scan_reflected_xss_pages,
         attackable_pages,
-        attack_progress_event,
+        scan_payload_limit,
     ))
 
     all_results.extend(run_module(
@@ -772,15 +718,15 @@ if run_scan:
         "SQL Injection",
         scan_sqli_pages,
         attackable_pages,
-        attack_progress_event,
+        scan_payload_limit,
     ))
 
     with st.spinner(f"Probando SQLi en autenticación ({sqli_intensity})..."):
         auth_sqli_results = scan_auth_sqli(
             pages=auth_attack_pages,
             client=auth_client,
-            max_payloads=max_auth_sqli_payloads,
-            headless=not visual_attack_mode,
+            max_payloads=effective_auth_payload_limit,
+            headless=True,
             progress_callback=attack_progress_event,
         )
 
@@ -818,19 +764,38 @@ if run_scan:
         attackable_pages,
     ))
 
-    all_results.extend(run_module(
-        "Analizando posibles SSRF...",
-        "SSRF",
-        scan_ssrf_hints,
-        attackable_pages,
-    ))
+    if is_aggressive_mode:
+        all_results.extend(run_module(
+            "Analizando posibles SSRF...",
+            "SSRF",
+            scan_ssrf_hints,
+            attackable_pages,
+        ))
 
-    all_results.extend(run_module(
-        "Analizando path traversal...",
-        "Path Traversal",
-        scan_path_traversal,
-        attackable_pages,
-    ))
+        all_results.extend(run_module(
+            "Analizando path traversal...",
+            "Path Traversal",
+            scan_path_traversal,
+            attackable_pages,
+        ))
+    else:
+        all_results.extend(normalize_results("SSRF", [{
+            "control": "SSRF",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "Módulo omitido por modo de auditoría no agresivo.",
+            "evidence": f"Modo: {scan_mode}",
+            "recommendation": "Usar modo agresivo autorizado si necesitas cobertura de pruebas más intrusivas.",
+        }]))
+
+        all_results.extend(normalize_results("Path Traversal", [{
+            "control": "Path Traversal",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "Módulo omitido por modo de auditoría no agresivo.",
+            "evidence": f"Modo: {scan_mode}",
+            "recommendation": "Usar modo agresivo autorizado si necesitas cobertura de pruebas más intrusivas.",
+        }]))
 
     all_results.extend(run_module(
         "Analizando exposición de runtime/dependencias...",
@@ -912,7 +877,7 @@ elif st.session_state.get("last_audit_df") is not None:
     if report_path:
         with open(report_path, "rb") as file:
             st.download_button(
-                label="Descargar último informe Word",
+                label="Descargar informe Word",
                 data=file,
                 file_name=report_path.split("/")[-1],
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

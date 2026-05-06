@@ -575,17 +575,15 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
     if max_payloads is not None:
         payloads = payloads[:max_payloads]
 
+    total_payloads = len(payloads)
     tested = []
     findings = []
     errors = []
 
-    total_payloads = len(payloads)
-
     for index, payload in enumerate(payloads, start=1):
-        if candidate_endpoints:
-            # MODO API
-            for endpoint in candidate_endpoints:
 
+        if candidate_endpoints:
+            for endpoint in candidate_endpoints:
                 if progress_callback:
                     progress_callback({
                         "phase": "SQL Injection en autenticación",
@@ -598,7 +596,7 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
                         "candidate_endpoints": [endpoint],
                         "field": "email",
                         "mode": "api",
-                        "detail": "Probando payload contra endpoint de autenticación detectado.",
+                        "detail": "Probando payload contra endpoint de autenticación capturado.",
                     })
 
                 result = test_payload_direct_api(endpoint, payload)
@@ -613,8 +611,6 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
                     findings.append(result)
 
         else:
-            # MODO BROWSER (IMPORTANTE: este else va alineado con el if candidate_endpoints)
-
             if progress_callback:
                 progress_callback({
                     "phase": "SQL Injection en autenticación",
@@ -645,41 +641,16 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
             if result.get("possible_bypass"):
                 findings.append(result)
 
-                if len(findings) >= 3:
-                    break
-
-            if len(findings) >= 3:
-                break
-
-            else:
-                result = test_payload_with_browser(
-                    login_url=login_url,
-                    payload=payload,
-                    headless=headless,
-                )
-
-            if not result.get("tested"):
-                errors.append(result)
-                continue
-
-            tested.append(result)
-
-            if result.get("possible_bypass"):
-                findings.append(result)
-
-            if len(findings) >= 3:
-                break
-
     if findings:
         evidence_items = []
 
         for item in findings[:5]:
             evidence_items.append(
-                f"Modo: {item.get('mode')} | "
-                f"Endpoint/URL: {item.get('endpoint') or item.get('initial_url')} | "
+                f"Modo: {item.get('mode', '')} | "
+                f"Endpoint/URL: {item.get('endpoint') or item.get('initial_url') or login_url} | "
                 f"Payload: {item.get('payload')} | "
                 f"HTTP: {item.get('status_code', '')} | "
-                f"Final: {item.get('final_url')} | "
+                f"Final: {item.get('final_url', '')} | "
                 f"SQL error: {item.get('sql_error')} | "
                 f"Success marker: {item.get('success_marker')}"
             )
@@ -694,6 +665,8 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
         )
 
     if tested:
+        tested_payloads = [str(item.get("payload", "")) for item in tested[:10]]
+
         target_info = (
             f"Endpoints candidatos: {candidate_endpoints}"
             if candidate_endpoints
@@ -705,7 +678,13 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
             "No evidenciado",
             "Informativa",
             "No se evidenció bypass de autenticación ni SQLi con los payloads configurados.",
-            f"{target_info} | Payloads base probados: {len(payloads)} | Intentos HTTP/DOM ejecutados: {len(tested)} | Errores técnicos: {len(errors)}",
+            (
+                f"{target_info} | "
+                f"Payloads configurados: {len(payloads)} | "
+                f"Intentos ejecutados: {len(tested)} | "
+                f"Errores técnicos: {len(errors)} | "
+                f"Payloads probados: {tested_payloads}"
+            ),
             "Complementar con revisión manual, análisis de endpoint API real, pruebas autenticadas y payloads específicos de tecnología."
         )
 
@@ -714,7 +693,12 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
         "No probado",
         "Media",
         "No se pudo ejecutar la prueba sobre el login detectado.",
-        f"URL: {login_url} | Endpoints candidatos: {candidate_endpoints} | Errores: {len(errors)} | Ejemplo: {errors[0].get('reason') or errors[0].get('error') if errors else 'sin detalle'}",
+        (
+            f"URL: {login_url} | "
+            f"Endpoints candidatos: {candidate_endpoints} | "
+            f"Errores: {len(errors)} | "
+            f"Ejemplo: {errors[0].get('reason') or errors[0].get('error') if errors else 'sin detalle'}"
+        ),
         "Verificar Playwright, versión de Python, selectores del formulario, endpoints capturados y bloqueos del navegador."
     )
 

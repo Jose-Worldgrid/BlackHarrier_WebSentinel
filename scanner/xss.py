@@ -46,15 +46,19 @@ def test_query_params(client, url, payload):
     return client.get(test_url)
 
 
-def scan_reflected_xss_pages(pages):
+def scan_reflected_xss_pages(pages, max_payloads=None):
     client = HttpClient()
     results = []
+    payloads = XSS_PAYLOADS
+
+    if max_payloads is not None:
+        payloads = payloads[:max_payloads]
 
     for page in pages:
         forms = extract_forms_from_html(page["url"], page["html"])
 
         for form in forms:
-            for payload in XSS_PAYLOADS:
+            for payload in payloads:
                 try:
                     response = submit_form(client, form, payload)
 
@@ -79,7 +83,7 @@ def scan_reflected_xss_pages(pages):
                         "recommendation": "Revisar conectividad y comportamiento del formulario."
                     })
 
-        for payload in XSS_PAYLOADS:
+        for payload in payloads:
             try:
                 response = test_query_params(client, page["url"], payload)
 
