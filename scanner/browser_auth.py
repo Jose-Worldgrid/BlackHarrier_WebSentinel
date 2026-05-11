@@ -1,7 +1,9 @@
 import asyncio
+import json
 import re
 import sys
 import time
+from urllib.parse import parse_qsl, urlencode
 from urllib.parse import urlparse
 
 import requests
@@ -9,6 +11,7 @@ import urllib3
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from scanner.payloads.sqli_payloads import SQLI_AUTH_PAYLOADS
+from scanner.http_client import get_default_proxy_url
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -58,6 +61,23 @@ def build_result(control, status, severity, description, evidence, recommendatio
 
 def normalize_url(url):
     return str(url or "").strip()
+
+
+def get_requests_proxy_config():
+    proxy_url = get_default_proxy_url()
+    if not proxy_url:
+        return None
+    return {
+        "http": proxy_url,
+        "https": proxy_url,
+    }
+
+
+def get_playwright_proxy_config():
+    proxy_url = get_default_proxy_url()
+    if not proxy_url:
+        return None
+    return {"server": proxy_url}
 
 
 def same_origin(url_a, url_b):
@@ -159,13 +179,17 @@ def collect_dom_evidence(page):
     return body, text
 
 
-def extract_auth_runtime_evidence(login_url, timeout_ms=12000, headless=True):
+def extract_auth_runtime_evidence(login_url, timeout_ms=7000, headless=True):
     network_events = []
     browser = None
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless)
+            launch_kwargs = {"headless": headless}
+            proxy_cfg = get_playwright_proxy_config()
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context(
                 ignore_https_errors=True,
                 viewport={"width": 1366, "height": 900},
@@ -213,7 +237,7 @@ def extract_auth_runtime_evidence(login_url, timeout_ms=12000, headless=True):
             except PlaywrightTimeoutError:
                 page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
 
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(400)
 
             inputs = page.locator("input, textarea, select").evaluate_all("""
                 els => els.map((el, index) => ({
@@ -332,7 +356,9 @@ def analyze_direct_response(endpoint, payload, response, mode):
     success = has_marker(lower, SUCCESS_MARKERS)
     failure = has_marker(lower, FAILURE_MARKERS)
 
-    possible_bypass = sql_error or (success and not failure)
+    # Avoid false positives: success markers alone are not enough unless the response moved away from the endpoint.
+    url_changed = response.url != endpoint
+    possible_bypass = sql_error or (success and not failure and url_changed and response.status_code < 400)
 
     return {
         "tested": True,
@@ -349,8 +375,60 @@ def analyze_direct_response(endpoint, payload, response, mode):
     }
 
 
+def mutate_json_payload(raw_data, payload):
+    try:
+        body = json.loads(raw_data or "{}")
+    except Exception:
+        return raw_data
+
+    if not isinstance(body, dict):
+        return raw_data
+
+    for key in list(body.keys()):
+        lower = str(key).lower()
+        if any(token in lower for token in ["email", "user", "username", "login", "identifier", "pass", "password"]):
+            body[key] = payload
+
+    try:
+        return json.dumps(body)
+    except Exception:
+        return raw_data
+
+
+def mutate_form_payload(raw_data, payload):
+    pairs = parse_qsl(raw_data or "", keep_blank_values=True)
+    if not pairs:
+        return raw_data
+
+    mutated = []
+    for key, value in pairs:
+        lower = str(key).lower()
+        if any(token in lower for token in ["email", "user", "username", "login", "identifier", "pass", "password"]):
+            mutated.append((key, payload))
+        else:
+            mutated.append((key, value))
+
+    try:
+        return urlencode(mutated, doseq=True)
+    except Exception:
+        return raw_data
+
+
+def mutate_request_body(post_data, content_type, payload):
+    content_type = str(content_type or "").lower()
+
+    if "application/json" in content_type:
+        return mutate_json_payload(post_data, payload)
+
+    if "application/x-www-form-urlencoded" in content_type:
+        return mutate_form_payload(post_data, payload)
+
+    return post_data
+
+
 def test_payload_direct_api(endpoint, payload, timeout=5):
     attempts = []
+    proxy_cfg = get_requests_proxy_config()
 
     for data in build_json_payloads(payload):
         try:
@@ -359,6 +437,7 @@ def test_payload_direct_api(endpoint, payload, timeout=5):
                 json=data,
                 timeout=timeout,
                 verify=False,
+                proxies=proxy_cfg,
                 allow_redirects=True,
                 headers={
                     "User-Agent": "BlackHarrier-WebSentinel/1.0",
@@ -383,6 +462,7 @@ def test_payload_direct_api(endpoint, payload, timeout=5):
                 data=data,
                 timeout=timeout,
                 verify=False,
+                proxies=proxy_cfg,
                 allow_redirects=True,
                 headers={
                     "User-Agent": "BlackHarrier-WebSentinel/1.0",
@@ -416,13 +496,17 @@ def test_payload_direct_api(endpoint, payload, timeout=5):
     }
 
 
-def test_payload_with_browser(login_url, payload, timeout_ms=7000, headless=True):
+def test_payload_with_browser(login_url, payload, timeout_ms=3500, headless=True):
     network_hits = []
     browser = None
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless)
+            launch_kwargs = {"headless": headless}
+            proxy_cfg = get_playwright_proxy_config()
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context(
                 ignore_https_errors=True,
                 viewport={"width": 1366, "height": 900},
@@ -454,7 +538,7 @@ def test_payload_with_browser(login_url, payload, timeout_ms=7000, headless=True
                 page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
 
             initial_url = page.url
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(350)
 
             user_input, password_input = find_login_fields(page)
 
@@ -482,7 +566,7 @@ def test_payload_with_browser(login_url, payload, timeout_ms=7000, headless=True
             try:
                 page.wait_for_load_state("networkidle", timeout=timeout_ms)
             except Exception:
-                page.wait_for_timeout(2500)
+                page.wait_for_timeout(900)
 
             elapsed = time.time() - started
             final_url = page.url
@@ -498,8 +582,7 @@ def test_payload_with_browser(login_url, payload, timeout_ms=7000, headless=True
 
             possible_bypass = (
                 sql_error
-                or (success and not failure)
-                or (url_changed and left_auth_flow and not failure and same_origin(initial_url, final_url))
+                or (success and not failure and url_changed and left_auth_flow and same_origin(initial_url, final_url))
                 or (elapsed >= 1.2 and "sleep" in payload.lower())
             )
 
@@ -532,6 +615,160 @@ def test_payload_with_browser(login_url, payload, timeout_ms=7000, headless=True
         return {
             "tested": False,
             "mode": "browser_dom",
+            "payload": payload,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "initial_url": login_url,
+            "final_url": login_url,
+            "network_hits": network_hits,
+        }
+
+
+def test_payload_with_browser_intercept(login_url, payload, timeout_ms=3500, headless=True):
+    network_hits = []
+    browser = None
+    intercepted = {"count": 0}
+
+    try:
+        with sync_playwright() as p:
+            launch_kwargs = {"headless": headless}
+            proxy_cfg = get_playwright_proxy_config()
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
+            browser = p.chromium.launch(**launch_kwargs)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1366, "height": 900},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
+                locale="es-ES",
+            )
+
+            def route_handler(route, request):
+                try:
+                    should_try = request.method in ["POST", "PUT", "PATCH"] and is_auth_endpoint(request.url)
+                    if not should_try:
+                        route.continue_()
+                        return
+
+                    headers = dict(request.headers)
+                    original_data = request.post_data or ""
+                    content_type = headers.get("content-type", "")
+                    mutated_data = mutate_request_body(original_data, content_type, payload)
+
+                    if mutated_data != original_data:
+                        intercepted["count"] += 1
+                        route.continue_(post_data=mutated_data, headers=headers)
+                        return
+
+                    route.continue_()
+                except Exception:
+                    route.continue_()
+
+            context.route("**/*", route_handler)
+
+            page = context.new_page()
+
+            def on_response(response):
+                try:
+                    network_hits.append({
+                        "url": response.url,
+                        "status": response.status,
+                        "content_type": response.headers.get("content-type", "")
+                    })
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+
+            try:
+                page.goto(login_url, wait_until="networkidle", timeout=timeout_ms)
+            except PlaywrightTimeoutError:
+                page.goto(login_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+            initial_url = page.url
+            page.wait_for_timeout(350)
+
+            user_input, password_input = find_login_fields(page)
+
+            if not user_input or not password_input:
+                body, text = collect_dom_evidence(page)
+                browser.close()
+                browser = None
+
+                return {
+                    "tested": False,
+                    "mode": "browser_intercept",
+                    "payload": payload,
+                    "reason": "No se detectaron campos email/usuario y contraseña en DOM renderizado.",
+                    "initial_url": initial_url,
+                    "final_url": initial_url,
+                    "body_sample": text[:500],
+                    "network_hits": network_hits,
+                }
+
+            user_input.fill("probe.user@example.com", timeout=5000)
+            password_input.fill("NotThePayload123!", timeout=5000)
+
+            started = time.time()
+            click_login(page)
+
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                page.wait_for_timeout(900)
+
+            elapsed = time.time() - started
+            final_url = page.url
+            body, text = collect_dom_evidence(page)
+            combined = f"{final_url}\n{text}\n{body[:8000]}"
+
+            sql_error = has_marker(combined, SQL_ERROR_MARKERS)
+            success = has_marker(combined, SUCCESS_MARKERS)
+            failure = has_marker(combined, FAILURE_MARKERS)
+
+            url_changed = final_url != initial_url
+            left_auth_flow = not any(marker in final_url.lower() for marker in AUTH_PATH_MARKERS)
+
+            possible_bypass = (
+                sql_error
+                or (success and not failure and url_changed and left_auth_flow and same_origin(initial_url, final_url))
+                or (elapsed >= 1.2 and "sleep" in payload.lower())
+            )
+
+            browser.close()
+            browser = None
+
+            return {
+                "tested": intercepted["count"] > 0,
+                "mode": "browser_intercept",
+                "payload": payload,
+                "initial_url": initial_url,
+                "final_url": final_url,
+                "url_changed": url_changed,
+                "elapsed": elapsed,
+                "sql_error": sql_error,
+                "success_marker": success,
+                "failure_marker": failure,
+                "possible_bypass": possible_bypass,
+                "intercepted_requests": intercepted["count"],
+                "body_sample": text[:700],
+                "network_hits": network_hits[-12:],
+                "reason": "No se interceptaron requests auth mutables." if intercepted["count"] == 0 else "",
+            }
+
+    except Exception as exc:
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+        return {
+            "tested": False,
+            "mode": "browser_intercept",
             "payload": payload,
             "reason": f"{type(exc).__name__}: {exc}",
             "initial_url": login_url,
@@ -640,6 +877,34 @@ def test_browser_auth_sqli_for_page(page, max_payloads=None, headless=True, prog
 
             if result.get("possible_bypass"):
                 findings.append(result)
+
+            if progress_callback:
+                progress_callback({
+                    "phase": "SQL Injection en autenticación",
+                    "technique": "Intercepción activa de request auth (tipo proxy)",
+                    "current": index,
+                    "total": total_payloads,
+                    "payload": payload,
+                    "login_url": login_url,
+                    "target": login_url,
+                    "candidate_endpoints": [],
+                    "field": "email/password",
+                    "mode": "browser_intercept",
+                    "detail": "Interceptando y mutando body de petición auth en vuelo.",
+                })
+
+            intercept_result = test_payload_with_browser_intercept(
+                login_url=login_url,
+                payload=payload,
+                headless=headless,
+            )
+
+            if not intercept_result.get("tested"):
+                errors.append(intercept_result)
+            else:
+                tested.append(intercept_result)
+                if intercept_result.get("possible_bypass"):
+                    findings.append(intercept_result)
 
     if findings:
         evidence_items = []

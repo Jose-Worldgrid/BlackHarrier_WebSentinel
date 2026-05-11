@@ -5,7 +5,72 @@ import os
 from docx import Document
 from docx.enum.section import WD_ORIENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from docx.shared import Inches, Pt, RGBColor
+
+
+# ── Colour palette ───────────────────────────────────────────────────
+SEV_BG = {
+    "Crítica":    "7B0000",   # dark red
+    "Alta":       "C0392B",   # red
+    "Media":      "D35400",   # orange
+    "Baja":       "2E86C1",   # blue
+    "Informativa":"616A6B",   # grey
+}
+SEV_FG = {
+    "Crítica":    "FFFFFF",
+    "Alta":       "FFFFFF",
+    "Media":      "FFFFFF",
+    "Baja":       "FFFFFF",
+    "Informativa":"FFFFFF",
+}
+HEADER_BG = "1C2833"   # dark slate
+HEADER_FG = "F2F3F4"
+
+
+def _set_cell_bg(cell, hex_color):
+    """Fill a table cell background with a hex colour (no #)."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_color)
+    tcPr.append(shd)
+
+
+def _set_cell_font(cell, hex_color, bold=False, size_pt=None):
+    for para in cell.paragraphs:
+        for run in para.runs:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            run.font.color.rgb = RGBColor(r, g, b)
+            if bold:
+                run.font.bold = True
+            if size_pt:
+                run.font.size = Pt(size_pt)
+
+
+def style_header_row(row, bg=HEADER_BG, fg=HEADER_FG):
+    """Apply dark header style to all cells in a row."""
+    for cell in row.cells:
+        _set_cell_bg(cell, bg)
+        for para in cell.paragraphs:
+            for run in para.runs:
+                r = int(fg[0:2], 16)
+                g = int(fg[2:4], 16)
+                b = int(fg[4:6], 16)
+                run.font.color.rgb = RGBColor(r, g, b)
+                run.font.bold = True
+
+
+def style_severity_cell(cell, severity):
+    bg = SEV_BG.get(severity, "616A6B")
+    fg = SEV_FG.get(severity, "FFFFFF")
+    _set_cell_bg(cell, bg)
+    _set_cell_font(cell, fg, bold=True)
 
 
 SEVERITY_ORDER = {
@@ -30,7 +95,17 @@ OK_STATUSES = {
     "Detectado",
     "No evidenciado",
     "No detectado",
-    "No probado",
+}
+
+OFFENSIVE_MODULES = {
+    "XSS reflejado",
+    "SQL Injection",
+    "SQL Injection Auth (Browser)",
+    "Open Redirect",
+    "XSS DOM",
+    "SSTI",
+    "SSRF",
+    "Path Traversal",
 }
 
 REPORTABLE_PAGE_CLASSES = {
@@ -166,7 +241,10 @@ def get_page_observation(page):
 
     if classification == "admin_candidate":
         if forms_count:
-            return f"Ruta administrativa candidata. Presenta pantalla/control de autenticación: {form_summary['form_type']}."
+            return (
+                f"Ruta administrativa candidata. Redirige o carga formulario de autenticación ({form_summary['form_type']}). "
+                "El formulario puede pertenecer a la página de destino del redirect, no al propio recurso administrativo."
+            )
         return "Ruta administrativa candidata a revisión de control de acceso."
 
     if classification == "api_candidate":
@@ -268,13 +346,16 @@ def add_severity_table(document, findings):
     table = document.add_table(rows=1, cols=2)
     table.style = "Table Grid"
 
-    table.rows[0].cells[0].text = "Severidad"
-    table.rows[0].cells[1].text = "Hallazgos"
+    hdr = table.rows[0]
+    hdr.cells[0].text = "Severidad"
+    hdr.cells[1].text = "Hallazgos"
+    style_header_row(hdr)
 
     for sev in ["Crítica", "Alta", "Media", "Baja", "Informativa"]:
         row = table.add_row().cells
         row[0].text = sev
         row[1].text = str(counts.get(sev, 0))
+        style_severity_cell(row[0], sev)
 
 
 def add_discovered_surface(document, pages):
@@ -383,17 +464,20 @@ def add_top_findings_table(document, findings):
     table.style = "Table Grid"
 
     headers = ["Sev.", "Categoría", "Control", "Evidencia resumida", "Recomendación"]
-
+    hdr_row = table.rows[0]
     for i, h in enumerate(headers):
-        table.rows[0].cells[i].text = h
+        hdr_row.cells[i].text = h
+    style_header_row(hdr_row)
 
     for item in sort_results(findings)[:25]:
         row = table.add_row().cells
-        row[0].text = item.get("Severidad", "")
+        sev = item.get("Severidad", "")
+        row[0].text = sev
         row[1].text = item.get("Módulo", "")
         row[2].text = truncate(item.get("Control", ""), 90)
         row[3].text = truncate(item.get("Evidencia", ""), 220)
         row[4].text = truncate(item.get("Recomendación", ""), 220)
+        style_severity_cell(row[0], sev)
 
 
 def add_execution_errors_table(document, errors):
@@ -512,18 +596,144 @@ def add_test_path_summary(document, pages=None, pages_count=None):
         document.add_paragraph(statement, style="List Bullet")
 
 
+def infer_payload_families(text):
+    value = safe_text(text).lower()
+    families = []
+
+    rules = [
+        ("XSS script/event", ["<script", "onerror", "onload", "svg", "javascript:"]),
+        ("SQLi boolean/error", ["or 1=1", "boolean", "sql", "syntax", "error-based"]),
+        ("SQLi time-based", ["sleep(", "benchmark(", "waitfor delay", "time-based"]),
+        ("SQLi union", ["union select", "union-based"]),
+        ("SSTI expression", ["{{", "${", "<%=", "{%", "template"]),
+        ("Open redirect", ["redirect", "next=", "url=", "return=", "//"]),
+        ("DOM source/sink", ["document.location", "innerhtml", "eval(", "sink", "source"]),
+        ("SSRF internal/metadata", ["169.254.169.254", "localhost", "127.0.0.1", "file://", "gopher://"]),
+        ("Path traversal", ["../", "..\\", "%2e%2e%2f", "/etc/passwd", "win.ini"]),
+    ]
+
+    for family, markers in rules:
+        if any(marker in value for marker in markers):
+            families.append(family)
+
+    return families
+
+
+def summarize_module_status(items):
+    statuses = {safe_text(x.get("Resultado")) for x in items}
+    if any(status in FINDING_STATUSES for status in statuses):
+        return "Con hallazgo"
+    if any(status in {"Error", "No probado"} for status in statuses):
+        return "Cobertura incompleta"
+    return "Ejecutadas sin explotación"
+
+
+def add_offensive_coverage_section(document, results):
+    document.add_heading("8. Pruebas ofensivas superadas y cobertura", 1)
+
+    offensive_items = [
+        item for item in results
+        if item.get("Módulo") in OFFENSIVE_MODULES
+    ]
+
+    if not offensive_items:
+        document.add_paragraph(
+            "No hay evidencia suficiente de ejecución de pruebas ofensivas en este informe."
+        )
+        return
+
+    document.add_paragraph(
+        "Esta sección resume la cobertura ofensiva ejecutada por módulo, "
+        "incluyendo técnicas comprobadas, familias de payloads observadas en evidencias y resultado final de cada batería. "
+        "Cuando el estado es 'No evidenciado/No detectado', significa que la prueba se ejecutó y no se consiguió explotación."
+    )
+
+    grouped = defaultdict(list)
+    for item in offensive_items:
+        grouped[item.get("Módulo", "Sin módulo")].append(item)
+
+    table = document.add_table(rows=1, cols=6)
+    table.style = "Table Grid"
+
+    headers = [
+        "Módulo ofensivo",
+        "Total pruebas",
+        "Con hallazgo",
+        "Estado",
+        "Técnicas/controles",
+        "Familias de payloads",
+    ]
+    for i, h in enumerate(headers):
+        table.rows[0].cells[i].text = h
+
+    for module in sorted(grouped.keys()):
+        items = grouped[module]
+        findings = [x for x in items if x.get("Resultado") in FINDING_STATUSES]
+
+        techniques = []
+        families = []
+
+        for item in items:
+            control = truncate(item.get("Control", ""), 80)
+            if control and control not in techniques:
+                techniques.append(control)
+
+            haystack = " ".join([
+                safe_text(item.get("Control")),
+                safe_text(item.get("Descripción")),
+                safe_text(item.get("Evidencia")),
+            ])
+            for family in infer_payload_families(haystack):
+                if family not in families:
+                    families.append(family)
+
+        row = table.add_row().cells
+        row[0].text = module
+        row[1].text = str(len(items))
+        row[2].text = str(len(findings))
+        row[3].text = summarize_module_status(items)
+        row[4].text = truncate("; ".join(techniques), 260)
+        row[5].text = truncate("; ".join(families) if families else "No identificable en evidencia", 220)
+
+    passed_controls = [
+        item for item in offensive_items
+        if item.get("Resultado") in {"No evidenciado", "No detectado", "Correcto", "Detectado"}
+    ]
+
+    document.add_paragraph("Controles ofensivos superados sin evidencia de bypass:")
+    if not passed_controls:
+        document.add_paragraph("No hay controles superados documentables en esta ejecución.", style="List Bullet")
+    else:
+        for item in passed_controls[:40]:
+            document.add_paragraph(
+                f"{item.get('Módulo', '')} | {item.get('Control', '')} | Resultado: {item.get('Resultado', '')}",
+                style="List Bullet",
+            )
+
+
 def add_detailed_findings(document, findings):
-    document.add_heading("8. Detalle técnico de hallazgos", 1)
+    document.add_heading("9. Detalle técnico de hallazgos", 1)
 
     if not findings:
         document.add_paragraph("No se identificaron hallazgos técnicos relevantes.")
         return
 
     for item in sort_results(findings):
-        document.add_heading(
-            f"{item.get('Severidad', '')} - {item.get('Módulo', '')} - {item.get('Control', '')}",
+        sev = item.get("Severidad", "Informativa")
+        bg = SEV_BG.get(sev, "616A6B")
+        fg = SEV_FG.get(sev, "FFFFFF")
+
+        heading = document.add_heading(
+            f"{sev} | {item.get('Módulo', '')} | {item.get('Control', '')}",
             2,
         )
+        # Colour the heading text to match severity
+        for run in heading.runs:
+            r_int = int(bg[0:2], 16)
+            g_int = int(bg[2:4], 16)
+            b_int = int(bg[4:6], 16)
+            run.font.color.rgb = RGBColor(r_int, g_int, b_int)
+            run.font.bold = True
 
         document.add_paragraph(f"Resultado: {item.get('Resultado', '')}")
         document.add_paragraph(f"Descripción: {truncate(item.get('Descripción', ''), 900)}")
@@ -586,8 +796,14 @@ def add_discovery_dictionary_section(document, discovery):
         row[5].text = truncate(item.get("observation", ""), 180)
 
 
-def add_conclusion(document, findings, errors):
-    document.add_heading("9. Conclusión y próximos pasos", 1)
+def add_conclusion(document, findings, errors, results=None):
+    document.add_heading("10. Conclusión y próximos pasos", 1)
+
+    offensive_assurance = None
+    for item in results or []:
+        if item.get("Módulo") == "Aseguramiento ofensivo":
+            offensive_assurance = item
+            break
 
     if findings:
         document.add_paragraph(
@@ -603,6 +819,13 @@ def add_conclusion(document, findings, errors):
         document.add_paragraph(
             "No se han identificado hallazgos relevantes en el alcance automatizado. "
             "Se recomienda complementar con pruebas manuales autenticadas y revisión de lógica de negocio."
+        )
+
+    if offensive_assurance:
+        document.add_paragraph(
+            "Estado de aseguramiento ofensivo: "
+            f"{offensive_assurance.get('Resultado', '')}. "
+            f"{offensive_assurance.get('Descripción', '')}"
         )
 
     document.add_paragraph("Plan recomendado:")
@@ -659,8 +882,9 @@ def generate_word_report(
     add_execution_errors_table(document, errors)
     add_cases_checked(document, results)
     add_test_path_summary(document, pages, pages_count)
+    add_offensive_coverage_section(document, results)
     add_detailed_findings(document, findings)
-    add_conclusion(document, findings, errors)
+    add_conclusion(document, findings, errors, results)
 
     safe_name = audit_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     file_path = f"generated_reports/{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"

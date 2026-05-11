@@ -1,11 +1,14 @@
-import requests
+from requests import RequestException
+
+from scanner.http_client import HttpClient
 
 
 def scan_cookies(url: str):
     results = []
+    client = HttpClient(timeout=10)
 
     try:
-        response = requests.get(url, timeout=10, allow_redirects=True)
+        response = client.get(url, allow_redirects=True)
         cookies = response.cookies
 
         if not cookies:
@@ -49,7 +52,7 @@ def scan_cookies(url: str):
                     "recommendation": "Mantener configuración."
                 })
 
-    except requests.RequestException as exc:
+    except RequestException as exc:
         results.append({
             "control": "Cookies",
             "status": "Error",

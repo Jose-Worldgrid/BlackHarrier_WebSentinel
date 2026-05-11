@@ -9,7 +9,7 @@ def scan_http_methods(url: str):
     results = []
 
     try:
-        response = client.session.options(url, timeout=10, allow_redirects=True)
+        response = client.options(url, timeout=10, allow_redirects=True)
         allow = response.headers.get("Allow", "")
 
         enabled = {m.strip().upper() for m in allow.split(",") if m.strip()}

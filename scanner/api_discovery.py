@@ -12,18 +12,29 @@ def scan_api_discovery(url: str, pages):
     discovered = set()
 
     for page in pages:
-        soup = BeautifulSoup(page["html"], "html.parser")
+        page_url  = page.get("url") or page.get("final_url") or ""
+        page_html = page.get("html") or page.get("rendered_html") or ""
+        if not page_url or not page_html:
+            continue
+
+        try:
+            soup = BeautifulSoup(page_html, "html.parser")
+        except Exception:
+            continue
 
         for tag in soup.find_all(["a", "script"], href=True):
-            href = tag.get("href")
-            full = urljoin(page["url"], href)
-            if any(hint in full.lower() for hint in API_HINTS):
-                discovered.add(full)
+            href = tag.get("href") or ""
+            if href:
+                full = urljoin(page_url, href)
+                if any(hint in full.lower() for hint in API_HINTS):
+                    discovered.add(full)
 
         for tag in soup.find_all("script", src=True):
-            src = urljoin(page["url"], tag.get("src"))
-            if any(hint in src.lower() for hint in API_HINTS):
-                discovered.add(src)
+            src_val = tag.get("src") or ""
+            if src_val:
+                src = urljoin(page_url, src_val)
+                if any(hint in src.lower() for hint in API_HINTS):
+                    discovered.add(src)
 
     common_api_paths = [
         "api/",

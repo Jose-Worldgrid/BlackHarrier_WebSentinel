@@ -1,5 +1,7 @@
 import html
+import os
 import traceback
+import concurrent.futures
 from datetime import datetime
 
 import pandas as pd
@@ -29,6 +31,7 @@ from scanner.url_mapping import map_urls
 from scanner.tech_fingerprint import scan_technology_fingerprint
 from scanner.access_control import scan_access_control
 from scanner.dom_xss import scan_dom_xss
+from scanner.ssti import scan_ssti
 from scanner.ssrf import scan_ssrf_hints
 from scanner.path_traversal import scan_path_traversal
 from scanner.dependency_exposure import scan_dependency_exposure
@@ -49,6 +52,28 @@ st.set_page_config(
 )
 
 init_db()
+
+
+def _configure_http_defaults_compat(*, delay=None, verify_ssl=None, proxy_url=None):
+    """Handle both new and legacy configure_defaults signatures."""
+    try:
+        configure_defaults(delay=delay, verify_ssl=verify_ssl, proxy_url=proxy_url)
+    except TypeError as err:
+        if "proxy_url" not in str(err):
+            raise
+        configure_defaults(delay=delay, verify_ssl=verify_ssl)
+
+
+def _get_report_bytes_if_available(report_path):
+    if not report_path:
+        return None
+    if not os.path.exists(report_path):
+        return None
+    try:
+        with open(report_path, "rb") as file:
+            return file.read()
+    except Exception:
+        return None
 
 
 st.markdown("""
@@ -351,6 +376,18 @@ with st.sidebar:
         help="Recomendado: activado. Desactívalo solo en entornos de prueba autorizados con certificados no confiables.",
     )
 
+    use_burp_proxy = st.checkbox(
+        "Usar proxy Burp Suite",
+        value=False,
+        help="Enruta tráfico HTTP/HTTPS de la auditoría por un proxy (ej. Burp en 127.0.0.1:8080).",
+    )
+
+    burp_proxy_url = st.text_input(
+        "URL proxy (Burp)",
+        value="http://127.0.0.1:8080",
+        disabled=not use_burp_proxy,
+    )
+
     sqli_intensity = st.selectbox(
         "Intensidad SQLi en login",
         [
@@ -402,32 +439,177 @@ def resolve_payload_limit(*limits):
     return min(valid_limits) if valid_limits else None
 
 
+def sanitize_module_results(module_results):
+    """Pass-through: results are already precise from each scanner module."""
+    return [dict(item or {}) for item in module_results or []]
+
+
 def run_module(label, module_name, func, *args):
     with st.spinner(label):
-        try:
-            module_results = func(*args)
+        for attempt in range(1, 4):
+            try:
+                module_results = func(*args)
 
-            if module_results is None:
+                if module_results is None:
+                    if attempt < 3:
+                        continue
+                    return normalize_results(module_name, [{
+                        "control": module_name,
+                        "status": "Error",
+                        "severity": "Media",
+                        "description": "El módulo no devolvió resultados tras reintentos.",
+                        "evidence": "La función devolvió None.",
+                        "recommendation": "Revisar implementación del módulo.",
+                    }])
+
+                return normalize_results(module_name, sanitize_module_results(module_results))
+
+            except Exception:
+                if attempt < 3:
+                    continue
                 return normalize_results(module_name, [{
                     "control": module_name,
                     "status": "Error",
                     "severity": "Media",
-                    "description": "El módulo no devolvió resultados.",
-                    "evidence": "La función devolvió None.",
-                    "recommendation": "Revisar que el módulo retorne siempre una lista de resultados.",
+                    "description": "Error inesperado en el módulo tras reintentos automáticos.",
+                    "evidence": traceback.format_exc(),
+                    "recommendation": "Revisar trazas y dependencias del módulo.",
                 }])
 
-            return normalize_results(module_name, module_results)
 
-        except Exception:
-            return normalize_results(module_name, [{
-                "control": module_name,
-                "status": "Error",
-                "severity": "Media",
-                "description": "Error durante la ejecución del módulo.",
-                "evidence": traceback.format_exc(),
-                "recommendation": "Revisar trazas, dependencias, conectividad, argumentos del módulo y alcance.",
-            }])
+def _run_raw(func, *args):
+    """Execute a scanner function without Streamlit UI — safe for ThreadPoolExecutor."""
+    result = func(*args)
+    return result if result is not None else []
+
+
+def run_offensive_module(label, module_name, func, pages, *args):
+    # Always execute offensive modules at least once, even when discovered pages are empty.
+    # This prevents "No probado" due to empty scope and keeps the report conclusive.
+    effective_pages = list(pages or [])
+
+    if not effective_pages:
+        fallback_target = str(st.session_state.get("_target_url") or "").strip()
+        if fallback_target:
+            effective_pages = [{
+                "url": fallback_target,
+                "final_url": fallback_target,
+                "status_code": 200,
+                "html": "",
+                "forms": [],
+                "classification": "fallback_target",
+            }]
+
+    module_output = run_module(label, module_name, func, effective_pages, *args)
+    if module_output:
+        return module_output
+
+    return normalize_results(module_name, [{
+        "control": module_name,
+        "status": "No evidenciado",
+        "severity": "Informativa",
+        "description": "Prueba ejecutada sin evidencia de explotación en esta ejecución.",
+        "evidence": f"Objetivos evaluados: {len(effective_pages)}",
+        "recommendation": "Mantener monitorización y repetir tras cambios de versión o configuración.",
+    }])
+
+
+def build_offensive_assurance_result(all_results, aggressive_mode=False):
+    required_modules = [
+        "XSS reflejado",
+        "SQL Injection",
+        "SQL Injection Auth (Browser)",
+        "Open Redirect",
+        "XSS DOM",
+        "SSTI",
+    ]
+    if aggressive_mode:
+        required_modules.extend(["SSRF", "Path Traversal"])
+
+    finding_statuses = {"Hallazgo", "Posible hallazgo"}
+    incomplete_statuses = {"Error", "No probado"}
+
+    by_module = {}
+    for item in all_results:
+        module = str(item.get("Módulo", ""))
+        by_module.setdefault(module, []).append(item)
+
+    modules_with_findings = []
+    modules_incomplete = []
+    modules_passed = []
+
+    for module in required_modules:
+        module_items = by_module.get(module, [])
+        statuses = {str(x.get("Resultado", "")) for x in module_items}
+
+        if not module_items:
+            modules_incomplete.append(f"{module} (sin resultados)")
+            continue
+
+        if any(status in finding_statuses for status in statuses):
+            modules_with_findings.append(module)
+            continue
+
+        if any(status in incomplete_statuses for status in statuses):
+            modules_incomplete.append(module)
+            continue
+
+        modules_passed.append(module)
+
+    if modules_with_findings:
+        status = "Hallazgo"
+        severity = "Alta"
+        description = (
+            "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro."
+        )
+    elif modules_incomplete:
+        status = "No probado"
+        severity = "Media"
+        description = (
+            "No hay hallazgos en las pruebas completadas, pero la cobertura ofensiva es incompleta. "
+            "No procede etiquetar el activo como seguro."
+        )
+    else:
+        status = "No evidenciado"
+        severity = "Informativa"
+        description = (
+            "No se evidenciaron bypasses en la batería ofensiva ejecutada con cobertura completa de módulos requeridos."
+        )
+
+    evidence = (
+        f"Módulos requeridos: {len(required_modules)} | "
+        f"Completados sin hallazgo: {len(modules_passed)} | "
+        f"Con hallazgo: {len(modules_with_findings)} | "
+        f"Incompletos: {len(modules_incomplete)} | "
+        f"Pasados: {', '.join(modules_passed) if modules_passed else 'ninguno'} | "
+        f"Incompletos: {', '.join(modules_incomplete) if modules_incomplete else 'ninguno'}"
+    )
+
+    recommendation = (
+        "Mantener pruebas manuales de lógica de negocio y repetir en cada release."
+        if not modules_with_findings and not modules_incomplete
+        else "Completar módulos pendientes y repetir validación ofensiva antes de etiquetar como seguro."
+    )
+
+    return normalize_results("Aseguramiento ofensivo", [{
+        "control": "Cobertura ofensiva y resistencia",
+        "status": status,
+        "severity": severity,
+        "description": description,
+        "evidence": evidence,
+        "recommendation": recommendation,
+    }])
+
+
+def pipeline_error_result(control, description, evidence, recommendation):
+    return {
+        "control": control,
+        "status": "Error",
+        "severity": "Alta",
+        "description": description,
+        "evidence": evidence,
+        "recommendation": recommendation,
+    }
 
 
 def is_blocked_or_error_page(page):
@@ -461,11 +643,48 @@ def is_blocked_or_error_page(page):
     return False
 
 
+def is_redirected_page(page):
+    requested_url = str(page.get("url") or "").strip().rstrip("/")
+    final_url = str(page.get("final_url") or requested_url).strip().rstrip("/")
+    return bool(requested_url and final_url and requested_url != final_url)
+
+
+def is_admin_redirect_to_auth(page):
+    requested_url = str(page.get("url") or "").lower()
+    final_url = str(page.get("final_url") or requested_url).lower()
+    classification = str(page.get("classification", "")).lower()
+
+    if not is_redirected_page(page):
+        return False
+
+    if classification == "protected_redirect_to_auth":
+        return True
+
+    admin_tokens = ["/admin", "dashboard", "panel", "backoffice", "administrator"]
+    auth_tokens = ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion"]
+
+    return any(token in requested_url for token in admin_tokens) and any(token in final_url for token in auth_tokens)
+
+
+def is_auth_like_page(page):
+    url = str(page.get("final_url") or page.get("url") or "").lower()
+    classification = str(page.get("classification", "")).lower()
+    auth_tokens = ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion", "register", "registro", "signup"]
+    return (
+        classification in ["auth", "registration"]
+        or has_auth_form_indicators(page)
+        or any(token in url for token in auth_tokens)
+    )
+
+
 def is_auth_attack_page(page):
     url = str(page.get("final_url") or page.get("url") or "").lower()
     classification = str(page.get("classification", "")).lower()
 
     if is_blocked_or_error_page(page):
+        return False
+
+    if is_admin_redirect_to_auth(page):
         return False
 
     return (
@@ -477,12 +696,96 @@ def is_auth_attack_page(page):
     )
 
 
+def has_auth_form_indicators(page):
+    forms = page.get("forms") or []
+    runtime_inputs = page.get("browser_inputs") or (page.get("browser_runtime") or {}).get("inputs") or []
+
+    flattened_forms = str(forms).lower()
+    flattened_runtime = str(runtime_inputs).lower()
+    combined = f"{flattened_forms} {flattened_runtime}"
+
+    has_password = "password" in combined or "contraseña" in combined
+    has_user = any(token in combined for token in ["email", "correo", "usuario", "user", "login"])
+    return has_password and has_user
+
+
+def build_auth_attack_pages(pages):
+    auth_keywords = ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion", "session"]
+    candidates = []
+    seen = set()
+
+    for page in pages or []:
+        url = str(page.get("final_url") or page.get("url") or "").lower()
+        classification = str(page.get("classification", "")).lower()
+        ai_page_type = str((page.get("ai_context") or {}).get("page_type", "")).lower()
+
+        if is_admin_redirect_to_auth(page):
+            continue
+
+        # Keep admin candidates out of auth SQLi target set; they are tested in access control.
+        if classification == "admin_candidate":
+            continue
+
+        is_candidate = (
+            is_auth_attack_page(page)
+            or has_auth_form_indicators(page)
+            or ai_page_type == "auth"
+            or any(keyword in url for keyword in auth_keywords)
+        )
+
+        if not is_candidate:
+            continue
+
+        key = str(page.get("final_url") or page.get("url") or "")
+        if key and key not in seen:
+            seen.add(key)
+            candidates.append(page)
+
+    return candidates
+
+
 def is_generic_attack_page(page):
+    if is_admin_redirect_to_auth(page):
+        return False
+
+    # Login/registration with credentials fields must be attackable even if page text contains generic blockers.
+    classification = str(page.get("classification", "")).lower()
+    if classification in ["auth", "registration"] and has_auth_form_indicators(page):
+        return True
+
     if is_blocked_or_error_page(page):
         return False
 
     status = str(page.get("status_code", ""))
-    return status.startswith("2") or status.startswith("3")
+
+    if is_redirected_page(page) and not is_auth_like_page(page):
+        return False
+
+    # Treat pages with no status_code as accessible (URL harvested from HTML, not direct request)
+    if not status:
+        return True
+
+    # Accept 2xx and 3xx; exclude 4xx/5xx (except 401/403 which may still have forms)
+    if status.startswith("2") or status.startswith("3"):
+        return True
+
+    # 401/403 pages may expose forms behind auth — still worth probing
+    if status in ("401", "403"):
+        return bool(page.get("forms"))
+
+    return False
+
+
+def dedupe_pages_by_url(pages):
+    unique = []
+    seen = set()
+    for page in pages or []:
+        key = str(page.get("final_url") or page.get("url") or "").strip().rstrip("/")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(page)
+    return unique
 
 
 def add_browser_runtime_form_if_detected(page, runtime):
@@ -544,29 +847,28 @@ def add_browser_runtime_form_if_detected(page, runtime):
         page["rendered_html"] = runtime["html"]
 
 
-if run_scan:
-    if not target_url:
-        st.error("Debes introducir una URL objetivo.")
-        st.stop()
-
+def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_url, use_auth, login_url, username, password, max_auth_sqli_payloads, audit_name):
+    """Phase 1: crawl, discovery, passive recon. Returns session state dict."""
     all_results = []
     scan_profile = SCAN_MODES.get(scan_mode, {})
     scan_delay = float(scan_profile.get("delay", 0.35))
     scan_payload_limit = scan_profile.get("max_payloads")
     is_aggressive_mode = bool(scan_profile.get("aggressive", False))
-
     effective_auth_payload_limit = resolve_payload_limit(scan_payload_limit, max_auth_sqli_payloads)
+    effective_proxy_url = burp_proxy_url.strip() if use_burp_proxy else None
 
-    configure_defaults(delay=scan_delay, verify_ssl=verify_ssl)
-    auth_client = HttpClient()
+    # Phase 1: Desabilitar SSL verification para módulos pasivos
+    # Los módulos de reconnaissance (headers, cookies, CORS, etc.) no requieren SSL strict
+    # porque no realizan pruebas ofensivas. Esto evita errores con certificados autofirmados.
+    _configure_http_defaults_compat(delay=scan_delay, verify_ssl=False, proxy_url=effective_proxy_url)
+    auth_client = HttpClient(verify_ssl=False)
 
     st.markdown(
         f"""
         <div class="bh-panel">
-            <b>Auditoría iniciada mediante BlackHarrier Web Sentinel</b><br>
-            Autor: <b>Jose</b><br>
-            Modo seleccionado: <b>{html.escape(str(scan_mode))}</b><br>
-            Objetivo: <b>{html.escape(str(target_url))}</b>
+            <b>Fase 1 — Reconocimiento y mapeo de superficie</b><br>
+            Objetivo: <b>{html.escape(str(target_url))}</b> | Modo: <b>{html.escape(str(scan_mode))}</b><br>
+            Proxy Burp: <b>{html.escape(effective_proxy_url if effective_proxy_url else 'desactivado')}</b>
         </div>
         """,
         unsafe_allow_html=True,
@@ -577,68 +879,86 @@ if run_scan:
         auth_client.verify_ssl = verify_ssl
         all_results.extend(normalize_results("Autenticación", auth_results))
 
-    with st.spinner("Ejecutando crawling completo..."):
-        crawler_pages = crawl_site(target_url, max_pages=None, client=auth_client)
+    with st.spinner("Crawling completo del objetivo..."):
+        try:
+            crawler_pages, _ssl_fallback = crawl_site(target_url, max_pages=None, client=auth_client)
+            if _ssl_fallback:
+                st.info("⚠️ El certificado SSL del objetivo no pudo verificarse. La herramienta continuó el crawl omitiendo la verificación SSL (comportamiento esperado en entornos con certificados autofirmados o internos).")
+        except Exception:
+            crawler_pages = []
+            _ssl_fallback = False
+            all_results.extend(normalize_results("Crawler", [pipeline_error_result(
+                control="Crawler",
+                description="Error durante el crawling inicial.",
+                evidence=traceback.format_exc(),
+                recommendation="Revisar conectividad, DNS, certificados SSL/TLS y bloqueos WAF.",
+            )]))
 
-    with st.spinner("Ejecutando discovery activo con diccionario de rutas comunes..."):
-        discovery = discover_surface(
-            target_url,
-            client=auth_client,
-            seed_pages=crawler_pages,
-            max_active_checks=500 if is_aggressive_mode else 300,
-        )
+    with st.spinner("Discovery activo con diccionario de rutas comunes..."):
+        try:
+            discovery = discover_surface(
+                target_url,
+                client=auth_client,
+                seed_pages=crawler_pages,
+                max_active_checks=500 if is_aggressive_mode else 300,
+            )
+        except Exception:
+            discovery = {
+                "pages": list(crawler_pages),
+                "discovered": [],
+                "results": [pipeline_error_result(
+                    control="Discovery",
+                    description="Error durante discovery activo; se usa superficie previa de crawler.",
+                    evidence=traceback.format_exc(),
+                    recommendation="Validar estabilidad del objetivo, límites de rate-limit y errores SSL.",
+                )],
+                "metrics": {},
+            }
 
-    pages = discovery["pages"]
-    pages = enrich_pages_with_ai_context(pages)
-    discovered_urls = discovery["discovered"]
+    pages = discovery.get("pages") or []
+    if not pages and crawler_pages:
+        pages = crawler_pages
+        st.warning("Discovery activo no devolvió páginas útiles. Se continúa con la superficie del crawler.")
+
+    try:
+        pages = enrich_pages_with_ai_context(pages)
+    except Exception:
+        all_results.extend(normalize_results("Enriquecimiento AI", [pipeline_error_result(
+            control="Enriquecimiento AI",
+            description="Error en enriquecimiento AI; se continúa sin este paso.",
+            evidence=traceback.format_exc(),
+            recommendation="Revisar dependencias del agente AI.",
+        )]))
+
+    discovered_urls = discovery.get("discovered") or []
 
     runtime_candidates = [
         page for page in pages
         if page.get("ai_context", {}).get("page_type") == "auth"
         or page.get("ai_context", {}).get("requires_browser_dom")
+        or is_auth_like_page(page)
     ]
 
     if runtime_candidates:
-        st.info(f"Analizando DOM dinámico con navegador en {len(runtime_candidates)} URL(s)...")
+        st.info(f"Analizando DOM dinámico en {len(runtime_candidates)} URL(s)...")
         dom_progress = st.progress(0)
         dom_status_box = st.empty()
 
         for index, page in enumerate(runtime_candidates, start=1):
             page_url = page.get("final_url") or page.get("url")
-            dom_status_box.write(f"Renderizando con Playwright: `{page_url}`")
-
+            if not page_url:
+                continue
+            dom_status_box.write(f"Renderizando con Playwright: {page_url}")
             try:
-                runtime = extract_auth_runtime_evidence(
-                    page_url,
-                    headless=True,
-                    timeout_ms=8000,
-                )
+                runtime = extract_auth_runtime_evidence(page_url, headless=True, timeout_ms=8000)
             except Exception as exc:
-                runtime = {
-                    "ok": False,
-                    "url": page_url,
-                    "candidate_endpoints": [],
-                    "inputs": [],
-                    "buttons": [],
-                    "network_events": [],
-                    "html": "",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-
+                runtime = {"ok": False, "url": page_url, "candidate_endpoints": [], "inputs": [], "buttons": [], "network_events": [], "html": "", "error": f"{type(exc).__name__}: {exc}"}
             add_browser_runtime_form_if_detected(page, runtime)
             dom_progress.progress(index / len(runtime_candidates))
 
-        dom_status_box.write("Análisis dinámico con navegador finalizado.")
-    else:
-        st.info("No se detectaron páginas que requieran análisis DOM dinámico.")
+        dom_status_box.write("Análisis DOM finalizado.")
 
-    st.success(
-        f"URLs HTML analizadas: {len(pages)} | "
-        f"URLs procesadas por discovery: {len(discovered_urls)}"
-    )
-
-    all_results.extend(normalize_results("Discovery", discovery["results"]))
-
+    all_results.extend(normalize_results("Discovery", discovery.get("results") or []))
     all_results.extend(run_module("Mapeando URLs asociadas...", "Mapa de URLs", map_urls, target_url, pages, auth_client))
     all_results.extend(run_module("Reconocimiento tecnológico...", "Reconocimiento", scan_recon, target_url))
     all_results.extend(run_module("Validando TLS/HTTPS...", "TLS/HTTPS", scan_tls, target_url))
@@ -651,9 +971,188 @@ if run_scan:
     all_results.extend(run_module("Descubriendo APIs...", "API Discovery", scan_api_discovery, target_url, pages))
     all_results.extend(run_module("Analizando formularios...", "Formularios", scan_forms_from_pages, pages))
     all_results.extend(run_module("Analizando CSRF...", "CSRF", scan_csrf_from_pages, pages))
+    all_results.extend(run_module("Fingerprinting avanzado de tecnologías...", "Fingerprinting avanzado", scan_technology_fingerprint, target_url, pages))
 
-    attackable_pages = [page for page in pages if is_generic_attack_page(page)]
-    auth_attack_pages = [page for page in pages if is_auth_attack_page(page)]
+    auth_attack_pages = dedupe_pages_by_url(build_auth_attack_pages(pages))
+    attackable_pages = dedupe_pages_by_url([p for p in pages if is_generic_attack_page(p)])
+
+    # Safety net: if generic filter yields zero but auth/registration pages exist, use them as attackable scope.
+    if not attackable_pages:
+        auth_fallback = [
+            p for p in pages
+            if str(p.get("classification", "")).lower() in ["auth", "registration"]
+            and not is_blocked_or_error_page(p)
+        ]
+        attackable_pages = dedupe_pages_by_url(auth_fallback)
+
+    return {
+        "all_results": all_results,
+        "pages": pages,
+        "discovery": discovery,
+        "discovered_urls": discovered_urls,
+        "crawler_pages": crawler_pages,
+        "auth_client_cfg": {"verify_ssl": verify_ssl},
+        "attackable_pages": attackable_pages,
+        "auth_attack_pages": auth_attack_pages,
+        "scan_profile": scan_profile,
+        "scan_payload_limit": scan_payload_limit,
+        "is_aggressive_mode": is_aggressive_mode,
+        "effective_auth_payload_limit": effective_auth_payload_limit,
+        "effective_proxy_url": effective_proxy_url,
+        "scan_mode": scan_mode,
+        "audit_name": audit_name,
+        "target_url": target_url,
+        "sqli_intensity": st.session_state.get("_sqli_intensity", "Normal - 30 payloads"),
+    }
+
+
+def _render_phase1_summary(state):
+    pages = state["pages"]
+    auth_attack_pages = state["auth_attack_pages"]
+    attackable_pages = state["attackable_pages"]
+
+    login_pages = list(auth_attack_pages)
+
+    api_pages = [p for p in pages if p.get("classification") in ["api_candidate"]]
+    admin_pages = [p for p in pages if p.get("classification") in ["admin_candidate"]]
+    protected_pages = [p for p in pages if p.get("classification") in ["protected", "protected_redirect_to_auth"]]
+
+    st.markdown("---")
+    st.markdown("### Fase 1 completada — Superficie descubierta")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Páginas totales", len(pages))
+    c2.metric("Páginas atacables", len(attackable_pages))
+    c3.metric("Logins / auth", len(login_pages))
+    c4.metric("APIs candidatas", len(api_pages))
+    c5.metric("Admin / protegidas", len(admin_pages) + len(protected_pages))
+
+    if login_pages:
+        st.markdown("**Logins y rutas de autenticación detectadas:**")
+        for p in login_pages[:15]:
+            url = p.get("final_url") or p.get("url") or ""
+            classification = p.get("classification", "")
+            forms_count = len(p.get("forms") or [])
+            st.markdown(f"- `{url}` — clasificación: **{classification}** — formularios: **{forms_count}**")
+    else:
+        st.info("No se detectaron rutas de autenticación. Los ataques de login no se ejecutarán.")
+
+    if api_pages:
+        st.markdown("**APIs candidatas:**")
+        for p in api_pages[:10]:
+            st.markdown(f"- `{p.get('final_url') or p.get('url', '')}`")
+
+    if admin_pages:
+        st.markdown("**Rutas administrativas:**")
+        for p in admin_pages[:10]:
+            st.markdown(f"- `{p.get('final_url') or p.get('url', '')}`")
+
+
+if run_scan:
+    if not target_url:
+        st.error("Debes introducir una URL objetivo.")
+        st.stop()
+
+    st.session_state["_target_url"] = target_url
+    st.session_state["_sqli_intensity"] = sqli_intensity
+
+    state = _scan_phase1(
+        target_url=target_url,
+        scan_mode=scan_mode,
+        verify_ssl=verify_ssl,
+        use_burp_proxy=use_burp_proxy,
+        burp_proxy_url=burp_proxy_url,
+        use_auth=use_auth,
+        login_url=login_url,
+        username=username,
+        password=password,
+        max_auth_sqli_payloads=max_auth_sqli_payloads,
+        audit_name=audit_name,
+    )
+
+    st.session_state["phase1_state"] = state
+    st.session_state["phase2_done"] = False
+
+    _render_phase1_summary(state)
+
+    # ── Partial results (passive only) ─────────────────────────────
+    partial_df = pd.DataFrame(state["all_results"])
+    st.session_state["last_audit_df"] = partial_df
+
+    st.markdown("---")
+    st.success(f"Reconocimiento completado. Páginas: {len(state['pages'])} | Atacables: {len(state['attackable_pages'])} | Auth targets: {len(state['auth_attack_pages'])}")
+    # Rerender to enter the elif branch where the attack button is rendered
+    st.rerun()
+
+elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_done"):
+    state = st.session_state["phase1_state"]
+    target_url = state["target_url"]
+    audit_name = state["audit_name"]
+    scan_mode = state["scan_mode"]
+    pages = state["pages"]
+    discovery = state["discovery"]
+    all_results = list(state["all_results"])
+
+    _render_phase1_summary(state)
+
+    # ── Targets detail before confirming attack ──────────────────────────
+    attackable_pages_preview = state.get("attackable_pages") or []
+    auth_attack_pages_preview = state.get("auth_attack_pages") or []
+
+    st.markdown("---")
+    st.markdown("### Objetivos identificados para ataque ofensivo")
+
+    col_att, col_auth = st.columns(2)
+
+    with col_att:
+        st.markdown(f"**Páginas atacables — XSS / SQLi / SSTI / SSRF / Redirect** ({len(attackable_pages_preview)})")
+        if attackable_pages_preview:
+            with st.expander("Ver listado completo", expanded=len(attackable_pages_preview) <= 10):
+                for p in attackable_pages_preview[:50]:
+                    u = p.get("final_url") or p.get("url") or ""
+                    clf = p.get("classification") or "—"
+                    st.markdown(f"- `{u}` &nbsp; <span style='color:#a0c4ff;font-size:0.85em'>{html.escape(clf)}</span>", unsafe_allow_html=True)
+                if len(attackable_pages_preview) > 50:
+                    st.caption(f"… y {len(attackable_pages_preview) - 50} más")
+        else:
+            st.info("Sin páginas atacables genéricas.")
+
+    with col_auth:
+        st.markdown(f"**Targets de autenticación — Auth SQLi / Brute-force** ({len(auth_attack_pages_preview)})")
+        if auth_attack_pages_preview:
+            with st.expander("Ver listado completo", expanded=len(auth_attack_pages_preview) <= 10):
+                for p in auth_attack_pages_preview[:30]:
+                    u = p.get("final_url") or p.get("url") or ""
+                    forms_n = len(p.get("forms") or [])
+                    st.markdown(f"- `{u}` &nbsp; <span style='color:#ffadad;font-size:0.85em'>forms: {forms_n}</span>", unsafe_allow_html=True)
+                if len(auth_attack_pages_preview) > 30:
+                    st.caption(f"… y {len(auth_attack_pages_preview) - 30} más")
+        else:
+            st.info("Sin targets de autenticación detectados.")
+
+    st.markdown("---")
+    run_offensive = st.button("Lanzar ataques ofensivos", type="primary")
+
+    if not run_offensive:
+        st.stop()
+
+    # ── Phase 2: pull context from session state ─────────────────────────
+    is_aggressive_mode    = state["is_aggressive_mode"]
+    scan_payload_limit    = state["scan_payload_limit"]
+    effective_auth_payload_limit = state["effective_auth_payload_limit"]
+    sqli_intensity        = state["sqli_intensity"]
+    attackable_pages      = state["attackable_pages"]
+    auth_attack_pages     = state["auth_attack_pages"]
+    effective_proxy_url   = state["effective_proxy_url"]
+
+    offensive_delay = min(float(state["scan_profile"].get("delay", 0.35)), 0.05)
+
+    _configure_http_defaults_compat(
+        delay=offensive_delay,
+        verify_ssl=state["auth_client_cfg"]["verify_ssl"],
+        proxy_url=effective_proxy_url,
+    )
+    auth_client = HttpClient()
 
     st.markdown("### Ejecución ofensiva en tiempo real")
     attack_status = st.empty()
@@ -705,22 +1204,69 @@ if run_scan:
             unsafe_allow_html=True,
         )
 
-    all_results.extend(run_module(
-        "Probando XSS reflejado...",
-        "XSS reflejado",
-        scan_reflected_xss_pages,
-        attackable_pages,
-        scan_payload_limit,
-    ))
+    # ── Parallel offensive HTTP modules (all independent, no Playwright) ────
+    effective_pages = attackable_pages or [{
+        "url": target_url, "final_url": target_url,
+        "status_code": 200, "html": "", "forms": [],
+        "classification": "fallback_target",
+    }]
 
-    all_results.extend(run_module(
-        "Probando SQL Injection...",
-        "SQL Injection",
-        scan_sqli_pages,
-        attackable_pages,
-        scan_payload_limit,
-    ))
+    parallel_jobs = [
+        ("XSS reflejado",           scan_reflected_xss_pages, (effective_pages, scan_payload_limit)),
+        ("SQL Injection",            scan_sqli_pages,           (effective_pages, scan_payload_limit)),
+        ("Open Redirect",            scan_open_redirect_pages,  (effective_pages,)),
+        ("JWT",                      scan_jwt_from_pages,        (effective_pages,)),
+        ("XSS DOM",                  scan_dom_xss,               (effective_pages,)),
+        ("SSTI",                     scan_ssti,                  (effective_pages,)),
+        ("SSRF",                     scan_ssrf_hints,            (effective_pages,)),
+        ("Path Traversal",           scan_path_traversal,        (effective_pages,)),
+        ("Control de acceso",        scan_access_control,        (target_url, pages, auth_client)),
+        ("Exposición de dependencias", scan_dependency_exposure, (target_url,)),
+    ]
 
+    parallel_status = st.empty()
+    parallel_status.info(f"Ejecutando {len(parallel_jobs)} módulos ofensivos en paralelo...")
+
+    parallel_results: dict[str, list] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        future_map = {
+            executor.submit(_run_raw, func, *args): name
+            for name, func, args in parallel_jobs
+        }
+        done_count = 0
+        for future in concurrent.futures.as_completed(future_map):
+            name = future_map[future]
+            done_count += 1
+            try:
+                raw = future.result()
+                normalized = normalize_results(name, sanitize_module_results(raw or []))
+                if not normalized:
+                    normalized = normalize_results(name, [{
+                        "control": name,
+                        "status": "No evidenciado",
+                        "severity": "Informativa",
+                        "description": "Módulo ejecutado sin observaciones en esta ejecución.",
+                        "evidence": "Sin hallazgos ni errores técnicos reportados por el módulo.",
+                        "recommendation": "Mantener monitorización y repetir en siguientes iteraciones.",
+                    }])
+                parallel_results[name] = normalized
+            except Exception:
+                parallel_results[name] = normalize_results(name, [{
+                    "control": name,
+                    "status": "Error",
+                    "severity": "Media",
+                    "description": "Error inesperado en módulo paralelo.",
+                    "evidence": traceback.format_exc(),
+                    "recommendation": "Revisar trazas y dependencias del módulo.",
+                }])
+            parallel_status.info(f"Módulos completados: {done_count}/{len(parallel_jobs)} | Último: {name}")
+
+    parallel_status.success(f"Módulos ofensivos HTTP completados ({len(parallel_jobs)}).")
+
+    for name, _ , _ in parallel_jobs:
+        all_results.extend(parallel_results.get(name, []))
+
+    # ── Auth SQLi (Playwright browser — sequential, must stay single-threaded) ──
     with st.spinner(f"Probando SQLi en autenticación ({sqli_intensity})..."):
         auth_sqli_results = scan_auth_sqli(
             pages=auth_attack_pages,
@@ -730,79 +1276,36 @@ if run_scan:
             progress_callback=attack_progress_event,
         )
 
-    all_results.extend(normalize_results(
-        "SQL Injection Auth (Browser)",
-        auth_sqli_results,
-    ))
+    should_escalate_auth = (
+        sqli_intensity == "Normal - 30 payloads"
+        and auth_attack_pages
+        and auth_sqli_results
+        and all(str(item.get("status", "")) == "No evidenciado" for item in auth_sqli_results)
+    )
+
+    if should_escalate_auth:
+        with st.spinner("Sin bypass inicial en login. Ejecutando segunda pasada exhaustiva..."):
+            auth_sqli_results = scan_auth_sqli(
+                pages=auth_attack_pages,
+                client=auth_client,
+                max_payloads=None,
+                headless=True,
+                progress_callback=attack_progress_event,
+            )
+        auth_sqli_results.append({
+            "control": "Cobertura SQLi Auth",
+            "status": "No evidenciado",
+            "severity": "Informativa",
+            "description": "Se ejecutó escalado automático a batería exhaustiva tras una primera pasada sin bypass.",
+            "evidence": f"Primera pasada: {sqli_intensity} | Segunda pasada: Exhaustiva | Objetivos auth: {len(auth_attack_pages)}",
+            "recommendation": "Mantener validación manual en flujos MFA/OAuth y lógica de negocio no cubierta por payloads genéricos.",
+        })
+
+    all_results.extend(normalize_results("SQL Injection Auth (Browser)", auth_sqli_results))
 
     attack_finished("Ejecución ofensiva finalizada.")
 
-    all_results.extend(run_module("Probando Open Redirect...", "Open Redirect", scan_open_redirect_pages, attackable_pages))
-    all_results.extend(run_module("Analizando JWT expuestos...", "JWT", scan_jwt_from_pages, attackable_pages))
-
-    all_results.extend(run_module(
-        "Fingerprinting avanzado de tecnologías...",
-        "Fingerprinting avanzado",
-        scan_technology_fingerprint,
-        target_url,
-        pages,
-    ))
-
-    all_results.extend(run_module(
-        "Analizando control de acceso...",
-        "Control de acceso",
-        scan_access_control,
-        target_url,
-        pages,
-        auth_client,
-    ))
-
-    all_results.extend(run_module(
-        "Analizando XSS DOM/frontend...",
-        "XSS DOM",
-        scan_dom_xss,
-        attackable_pages,
-    ))
-
-    if is_aggressive_mode:
-        all_results.extend(run_module(
-            "Analizando posibles SSRF...",
-            "SSRF",
-            scan_ssrf_hints,
-            attackable_pages,
-        ))
-
-        all_results.extend(run_module(
-            "Analizando path traversal...",
-            "Path Traversal",
-            scan_path_traversal,
-            attackable_pages,
-        ))
-    else:
-        all_results.extend(normalize_results("SSRF", [{
-            "control": "SSRF",
-            "status": "No probado",
-            "severity": "Informativa",
-            "description": "Módulo omitido por modo de auditoría no agresivo.",
-            "evidence": f"Modo: {scan_mode}",
-            "recommendation": "Usar modo agresivo autorizado si necesitas cobertura de pruebas más intrusivas.",
-        }]))
-
-        all_results.extend(normalize_results("Path Traversal", [{
-            "control": "Path Traversal",
-            "status": "No probado",
-            "severity": "Informativa",
-            "description": "Módulo omitido por modo de auditoría no agresivo.",
-            "evidence": f"Modo: {scan_mode}",
-            "recommendation": "Usar modo agresivo autorizado si necesitas cobertura de pruebas más intrusivas.",
-        }]))
-
-    all_results.extend(run_module(
-        "Analizando exposición de runtime/dependencias...",
-        "Exposición de dependencias",
-        scan_dependency_exposure,
-        target_url,
-    ))
+    all_results.extend(build_offensive_assurance_result(all_results, aggressive_mode=is_aggressive_mode))
 
     df = pd.DataFrame(all_results)
 
@@ -810,6 +1313,7 @@ if run_scan:
     st.session_state["last_audit_results"] = all_results
     st.session_state["last_audit_pages"] = pages
     st.session_state["last_audit_discovery"] = discovery
+    st.session_state["last_report_bytes"] = None
 
     st.subheader("Resultados")
     finding_statuses = ["Hallazgo", "Posible hallazgo"]
@@ -845,41 +1349,73 @@ if run_scan:
     )
     st.dataframe(module_summary, width="stretch")
 
-    save_audit(audit_name, target_url, all_results)
+    try:
+        save_audit(audit_name, target_url, all_results)
+    except Exception:
+        all_results.extend(normalize_results("Persistencia", [pipeline_error_result(
+            control="Persistencia",
+            description="No se pudo guardar la auditoría en base de datos.",
+            evidence=traceback.format_exc(),
+            recommendation="Comprobar permisos de escritura y estado del backend de almacenamiento.",
+        )]))
+        df = pd.DataFrame(all_results)
+        st.session_state["last_audit_df"] = df
 
-    report_path = generate_word_report(
-        audit_name=audit_name,
-        target_url=target_url,
-        results=all_results,
-        pages=pages,
-        discovery=discovery,
-        pages_count=len(pages),
-        scan_mode=scan_mode,
-    )
+    st.session_state["phase2_done"] = True
+    st.session_state["phase1_state"] = None
 
-    st.session_state["last_report_path"] = report_path
-
-    with open(report_path, "rb") as file:
-        st.download_button(
-            label="Descargar informe Word",
-            data=file,
-            file_name=report_path.split("/")[-1],
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            on_click="ignore",
+    report_path = None
+    try:
+        report_path = generate_word_report(
+            audit_name=audit_name,
+            target_url=target_url,
+            results=all_results,
+            pages=pages,
+            discovery=discovery,
+            pages_count=len(pages),
+            scan_mode=scan_mode,
         )
+        st.session_state["last_report_path"] = report_path
+        st.session_state["last_report_bytes"] = _get_report_bytes_if_available(report_path)
+    except Exception:
+        st.error("No se pudo generar el informe Word. Revisa logs y dependencias de reportes.")
+        st.session_state["last_report_path"] = None
+        st.session_state["last_report_bytes"] = None
+
+    if report_path:
+        report_bytes = st.session_state.get("last_report_bytes")
+        if report_bytes:
+            st.download_button(
+                label="Descargar informe Word",
+                data=report_bytes,
+                file_name=os.path.basename(report_path),
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                on_click="ignore",
+                key=f"download_word_{os.path.basename(report_path)}_{len(report_bytes)}",
+            )
+        else:
+            st.warning("El informe se generó, pero no está disponible para descarga en esta sesión.")
 elif st.session_state.get("last_audit_df") is not None:
     df = st.session_state["last_audit_df"]
     report_path = st.session_state.get("last_report_path")
+    report_bytes = st.session_state.get("last_report_bytes")
+
+    if report_path and not report_bytes:
+        report_bytes = _get_report_bytes_if_available(report_path)
+        st.session_state["last_report_bytes"] = report_bytes
+        if not report_bytes:
+            st.session_state["last_report_path"] = None
+            report_path = None
 
     st.subheader("Resultados de la última auditoría")
     st.dataframe(df, width="stretch")
 
-    if report_path:
-        with open(report_path, "rb") as file:
-            st.download_button(
-                label="Descargar informe Word",
-                data=file,
-                file_name=report_path.split("/")[-1],
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                on_click="ignore",
-            )
+    if report_path and report_bytes:
+        st.download_button(
+            label="Descargar informe Word",
+            data=report_bytes,
+            file_name=os.path.basename(report_path),
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            on_click="ignore",
+            key=f"download_last_word_{os.path.basename(report_path)}_{len(report_bytes)}",
+        )

@@ -56,6 +56,10 @@ def discover_from_sitemap(client, base_url):
     return urls
 
 
+MAX_DISCOVERED_URLS = 200
+MAX_CHECKED_URLS    = 150
+
+
 def map_urls(base_url: str, pages, client=None):
     client = client or HttpClient()
     discovered = set()
@@ -66,26 +70,47 @@ def map_urls(base_url: str, pages, client=None):
         discovered.add(urljoin(origin, path))
 
     for u in discover_from_robots(client, origin):
+        if len(discovered) >= MAX_DISCOVERED_URLS:
+            break
         discovered.add(u)
 
     for u in discover_from_sitemap(client, origin):
+        if len(discovered) >= MAX_DISCOVERED_URLS:
+            break
         discovered.add(u)
 
     for page in pages:
-        soup = BeautifulSoup(page["html"], "html.parser")
+        if len(discovered) >= MAX_DISCOVERED_URLS:
+            break
 
-        for tag in soup.find_all(["a", "link"], href=True):
-            discovered.add(urljoin(page["url"], tag["href"]))
-
-        for tag in soup.find_all("script", src=True):
-            discovered.add(urljoin(page["url"], tag["src"]))
-
-    checked = []
-
-    for url in sorted(discovered):
-        if not same_host(origin, url):
+        html_content = page.get("html") or ""
+        page_url = page.get("url") or page.get("final_url") or ""
+        if not page_url:
             continue
 
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+        except Exception:
+            continue
+
+        for tag in soup.find_all(["a", "link"], href=True):
+            if len(discovered) >= MAX_DISCOVERED_URLS:
+                break
+            href = tag.get("href", "")
+            if href and not href.startswith(("javascript:", "mailto:", "tel:", "#")):
+                discovered.add(urljoin(page_url, href))
+
+        for tag in soup.find_all("script", src=True):
+            if len(discovered) >= MAX_DISCOVERED_URLS:
+                break
+            src = tag.get("src", "")
+            if src:
+                discovered.add(urljoin(page_url, src))
+
+    same_host_urls = sorted(u for u in discovered if same_host(origin, u))
+    checked = []
+
+    for url in same_host_urls[:MAX_CHECKED_URLS]:
         try:
             response = client.get(url)
             checked.append({
@@ -106,7 +131,7 @@ def map_urls(base_url: str, pages, client=None):
         "control": "Mapa de URLs",
         "status": "Detectado",
         "severity": "Informativa",
-        "description": "URLs asociadas descubiertas y comprobadas.",
+        "description": f"URLs asociadas descubiertas: {len(discovered)} (comprobadas: {len(checked)}, límite: {MAX_CHECKED_URLS}).",
         "evidence": " | ".join([f"{x['status']} {x['url']}" for x in checked[:30]]),
         "recommendation": "Analizar manualmente rutas sensibles, endpoints autenticados y APIs detectadas."
     }]

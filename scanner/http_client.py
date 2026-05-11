@@ -11,10 +11,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DEFAULT_TIMEOUT = 15
 DEFAULT_DELAY = 0.35
 DEFAULT_VERIFY_SSL = True
+DEFAULT_PROXY_URL = None
 
 
-def configure_defaults(timeout=None, delay=None, verify_ssl=None):
-    global DEFAULT_TIMEOUT, DEFAULT_DELAY, DEFAULT_VERIFY_SSL
+def configure_defaults(timeout=None, delay=None, verify_ssl=None, proxy_url=None):
+    global DEFAULT_TIMEOUT, DEFAULT_DELAY, DEFAULT_VERIFY_SSL, DEFAULT_PROXY_URL
 
     if timeout is not None:
         DEFAULT_TIMEOUT = timeout
@@ -25,12 +26,19 @@ def configure_defaults(timeout=None, delay=None, verify_ssl=None):
     if verify_ssl is not None:
         DEFAULT_VERIFY_SSL = verify_ssl
 
+    DEFAULT_PROXY_URL = proxy_url or None
+
+
+def get_default_proxy_url():
+    return DEFAULT_PROXY_URL
+
 
 class HttpClient:
-    def __init__(self, timeout=None, delay=None, verify_ssl=None):
+    def __init__(self, timeout=None, delay=None, verify_ssl=None, proxy_url=None):
         self.timeout = DEFAULT_TIMEOUT if timeout is None else timeout
         self.delay = DEFAULT_DELAY if delay is None else delay
         self.verify_ssl = DEFAULT_VERIFY_SSL if verify_ssl is None else verify_ssl
+        self.proxy_url = DEFAULT_PROXY_URL if proxy_url is None else proxy_url
         self.session = requests.Session()
 
         self.session.headers.update({
@@ -48,10 +56,10 @@ class HttpClient:
         })
 
         retry = Retry(
-            total=2,
-            connect=2,
-            read=2,
-            backoff_factor=0.4,
+            total=1,
+            connect=1,
+            read=1,
+            backoff_factor=0.15,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET", "POST", "HEAD", "OPTIONS"]
         )
@@ -59,6 +67,12 @@ class HttpClient:
         adapter = HTTPAdapter(max_retries=retry)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
+
+        if self.proxy_url:
+            self.session.proxies.update({
+                "http": self.proxy_url,
+                "https": self.proxy_url,
+            })
 
     def normalize_url(self, url):
         parsed = urlparse(url)

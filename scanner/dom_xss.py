@@ -71,13 +71,19 @@ def scan_dom_xss(pages):
     checked_scripts = set()
 
     for page in pages:
-        html = page["html"]
-        soup = BeautifulSoup(html, "html.parser")
+        html = page.get("html") or page.get("rendered_html") or ""
+        page_url = page.get("url") or page.get("final_url") or ""
+        if not html or not page_url:
+            continue
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+        except Exception:
+            continue
 
-        sources = [("inline", html, page["url"])]
+        sources = [("inline", html, page_url)]
 
         for script in soup.find_all("script", src=True):
-            script_url = urljoin(page["url"], script["src"])
+            script_url = urljoin(page_url, script.get("src", ""))
 
             if script_url in checked_scripts:
                 continue

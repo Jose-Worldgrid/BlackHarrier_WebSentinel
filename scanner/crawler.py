@@ -45,6 +45,22 @@ COMMON_ENTRY_PATHS = (
 )
 
 
+def is_ssl_cert_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "certificate verify failed" in text
+        or "sslcertverificationerror" in text
+        or "cert_verify_failed" in text
+    )
+
+
+def to_http_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return url.replace("https://", "http://", 1)
+    return url
+
+
 def normalize_url(url: str) -> str:
     clean, _ = urldefrag(str(url or "").strip())
     return clean.rstrip("/")
@@ -212,6 +228,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
     queued = seed_common_paths(base_url)
     pages = []
     discovered_resources = set()
+    ssl_fallback_applied = False
 
     while queued:
         if max_pages is not None and len(pages) >= max_pages:
@@ -237,8 +254,35 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
         try:
             response = client.get(current)
         except Exception as exc:
-            logger.warning("Crawler request failed for %s: %s: %s", current, type(exc).__name__, exc)
-            continue
+            if (
+                not ssl_fallback_applied
+                and bool(getattr(client, "verify_ssl", True))
+                and is_ssl_cert_error(exc)
+            ):
+                ssl_fallback_applied = True
+                client.verify_ssl = False
+                logger.info(
+                    "Crawler: SSL cert validation failed for %s. Continuing with verify_ssl=False.",
+                    current,
+                )
+                try:
+                    response = client.get(current)
+                except Exception as retry_exc:
+                    logger.warning("Crawler request failed for %s: %s: %s", current, type(retry_exc).__name__, retry_exc)
+                    continue
+            else:
+                # Last chance: if HTTPS target fails repeatedly, try HTTP downgrade.
+                fallback_url = to_http_url(current)
+                if fallback_url != current:
+                    try:
+                        response = client.get(fallback_url)
+                        current = fallback_url
+                    except Exception as http_exc:
+                        logger.warning("Crawler request failed for %s: %s: %s", current, type(http_exc).__name__, http_exc)
+                        continue
+                else:
+                    logger.warning("Crawler request failed for %s: %s: %s", current, type(exc).__name__, exc)
+                    continue
 
         html_text = response.text or ""
         content_type = response.headers.get("Content-Type", "")
@@ -308,7 +352,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
             if absolute not in visited and absolute not in queued:
                 queued.append(absolute)
 
-    logger.info("Crawler finished pages=%s", len(pages))
+    logger.info("Crawler finished pages=%s ssl_fallback=%s", len(pages), ssl_fallback_applied)
     for page in pages[:20]:
         logger.debug(
             "Crawler page status=%s class=%s url=%s forms=%s",
@@ -323,4 +367,4 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
         for resource in list(sorted(discovered_resources))[:20]:
             logger.debug("Crawler resource %s", resource)
 
-    return pages
+    return pages, ssl_fallback_applied

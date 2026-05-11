@@ -436,7 +436,11 @@ def scan_forms_from_pages(pages):
     results = []
 
     for page in pages:
-        page_url = page.get("final_url") or page.get("url")
+        requested_url = str(page.get("url") or "").strip().rstrip("/")
+        final_url = str(page.get("final_url") or page.get("url") or "").strip().rstrip("/")
+        redirected = bool(requested_url and final_url and requested_url != final_url)
+
+        page_url = final_url or requested_url
         html = page.get("html", "") or ""
 
         browser_runtime = page.get("browser_runtime") or {}
@@ -457,12 +461,16 @@ def scan_forms_from_pages(pages):
                     "recommendation": "Identificar endpoint API real y ejecutar pruebas de SQLi/bypass directamente contra backend."
                 })
 
-        classic_forms = extract_forms_from_html(page_url, html)
-        client_side_auth_forms = detect_client_side_auth_forms(page)
+        classic_forms = []
+        client_side_auth_forms = []
         loose_input_forms = []
 
-        if not classic_forms and not client_side_auth_forms:
-            loose_input_forms = extract_loose_inputs(page_url, html)
+        if not redirected:
+            classic_forms = extract_forms_from_html(page_url, html)
+            client_side_auth_forms = detect_client_side_auth_forms(page)
+
+            if not classic_forms and not client_side_auth_forms:
+                loose_input_forms = extract_loose_inputs(page_url, html)
 
         forms = classic_forms + client_side_auth_forms + loose_input_forms
 
@@ -472,6 +480,9 @@ def scan_forms_from_pages(pages):
         registration_links = detect_registration_links(page)
         if registration_links:
             results.append(build_registration_link_result(page, registration_links))
+
+        if redirected:
+            continue
 
         if not forms:
             fallback = build_client_side_auth_result(page)

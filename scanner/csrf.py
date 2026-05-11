@@ -36,12 +36,24 @@ def has_header_based_csrf_hint(html):
 
 def scan_csrf_from_pages(pages):
     results = []
+    runtime_auth_like_pages = 0
 
     for page in pages:
-        page_html = page.get("html", "") or ""
+        page_url  = page.get("url") or page.get("final_url") or ""
+        page_html = page.get("html") or page.get("rendered_html") or ""
+        if not page_url:
+            continue
+        runtime_inputs = page.get("browser_inputs") or (page.get("browser_runtime") or {}).get("inputs") or []
+        if runtime_inputs:
+            combined = str(runtime_inputs).lower()
+            has_password = "password" in combined or "contraseña" in combined
+            has_user = any(token in combined for token in ["email", "correo", "usuario", "user", "login"])
+            if has_password and has_user:
+                runtime_auth_like_pages += 1
+
         meta_hint = has_meta_csrf_hint(page_html)
         header_hint = has_header_based_csrf_hint(page_html)
-        forms = extract_forms_from_html(page["url"], page["html"])
+        forms = extract_forms_from_html(page_url, page_html)
 
         for form in forms:
             if form["method"] != "POST":
@@ -99,11 +111,22 @@ def scan_csrf_from_pages(pages):
                 })
 
     if not results:
+        if runtime_auth_like_pages:
+            results.append({
+                "control": "Protección CSRF",
+                "status": "No evidenciado",
+                "severity": "Informativa",
+                "description": "No se evidenció falta de protección CSRF en formularios HTML POST; se detectaron flujos auth client-side.",
+                "evidence": f"Flujos dinámicos detectados: {runtime_auth_like_pages} | Formularios HTML POST: 0",
+                "recommendation": "Validar en pruebas activas que el backend exija token/cabecera anti-CSRF en endpoints API de autenticación.",
+            })
+            return results
+
         results.append({
             "control": "Protección CSRF",
-            "status": "No probado",
+            "status": "No evidenciado",
             "severity": "Informativa",
-            "description": "No se detectaron formularios POST en el alcance analizado.",
+            "description": "No se detectaron formularios HTML POST en el alcance analizado.",
             "evidence": "Sin formularios POST.",
             "recommendation": "Ampliar el análisis a rutas autenticadas."
         })

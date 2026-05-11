@@ -14,11 +14,14 @@ def scan_jwt_from_pages(pages):
     possible_tokens = []
 
     for page in pages:
-        html = page["html"]
+        html = page.get("html") or page.get("rendered_html") or ""
+        page_url = page.get("url") or page.get("final_url") or ""
+        if not html:
+            continue
 
         for token in html.replace('"', " ").replace("'", " ").split():
             if token.count(".") == 2 and len(token) > 40:
-                possible_tokens.append((page["url"], token.strip()))
+                possible_tokens.append((page_url, token.strip()))
 
     for source_url, token in possible_tokens[:20]:
         try:

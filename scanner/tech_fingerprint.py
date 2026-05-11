@@ -65,19 +65,26 @@ def scan_technology_fingerprint(url: str, pages):
 
     detected = []
 
-    for page in pages:
-        soup = BeautifulSoup(page["html"], "html.parser")
+    for page in (pages or [])[:100]:
+        html_content = page.get("html") or ""
+        page_url = page.get("url") or page.get("final_url") or ""
+        if not html_content:
+            continue
+
+        soup = BeautifulSoup(html_content, "html.parser")
 
         scripts = []
         for script in soup.find_all("script", src=True):
-            scripts.append(script["src"])
+            src = script.get("src", "")
+            if src:
+                scripts.append(src)
 
-        html_blob = page["html"] + " ".join(scripts)
+        html_blob = html_content + " " + " ".join(scripts)
 
         for lib, meta in KNOWN_CLIENT_LIBS.items():
             match = re.search(meta["pattern"], html_blob, re.IGNORECASE)
             if match:
-                detected.append((lib, match.group(0), page["url"], meta["risk"]))
+                detected.append((lib, match.group(0), page_url, meta["risk"]))
 
     seen = set()
     for lib, evidence, page_url, risk in detected:

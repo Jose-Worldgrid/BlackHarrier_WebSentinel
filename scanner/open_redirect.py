@@ -14,7 +14,10 @@ def scan_open_redirect_pages(pages):
     test_domain = "https://example.org"
 
     for page in pages:
-        parsed = urlparse(page["url"])
+        page_url = page.get("url") or page.get("final_url") or ""
+        if not page_url:
+            continue
+        parsed = urlparse(page_url)
         params = parse_qs(parsed.query)
 
         if not params:

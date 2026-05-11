@@ -42,6 +42,12 @@ def safe_status(value):
         return 0
 
 
+def is_effective_redirect(requested_url, final_url):
+    requested = normalize_url(requested_url)
+    final = normalize_url(final_url)
+    return bool(requested and final and requested != final)
+
+
 def get_origin(url: str) -> str:
     parsed = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
@@ -118,6 +124,22 @@ def build_candidate_urls(base_url: str, pages=None):
 
 def similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a or "", b or "").ratio()
+
+
+def is_ssl_cert_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "certificate verify failed" in text
+        or "sslcertverificationerror" in text
+        or "cert_verify_failed" in text
+    )
+
+
+def to_http_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return url.replace("https://", "http://", 1)
+    return url
 
 
 def get_soft404_baseline(client, origin):
@@ -313,15 +335,40 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
 
     discovered = []
     pages_by_final_url = {}
+    ssl_fallback_applied = False
+    request_error_count = 0
+    ssl_error_count = 0
 
     for page in seed_pages:
         final_url = normalize_url(page.get("final_url") or page.get("url"))
+        requested_url = normalize_url(page.get("url"))
 
         if not final_url:
             continue
 
         status_code = safe_status(page.get("status_code"))
-        classification = page.get("classification", "html_candidate")
+        
+        # Reclasificación: usar lógica completa que detecta redirecciones
+        # Crear un objeto response simulado con propiedades necesarias
+        class FakeResponse:
+            def __init__(self, status, headers_dict):
+                self.status_code = status
+                self.headers = headers_dict
+                self.text = page.get("html", "")
+        
+        fake_response = FakeResponse(status_code, {"Content-Type": page.get("content_type", "")})
+        
+        # Si hay redirección efectiva, detect protected_redirect_to_auth
+        if is_effective_redirect(requested_url, final_url):
+            if any(x in final_url.lower() for x in ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion"]):
+                if any(x in requested_url.lower() for x in ["admin", "panel", "dashboard", "private", "backoffice"]):
+                    classification = "protected_redirect_to_auth"
+                else:
+                    classification = "auth"
+            else:
+                classification = classify_url(requested_url, final_url, fake_response, baseline)
+        else:
+            classification = classify_url(requested_url, final_url, fake_response, baseline)
 
         discovered_item = {
             "source": "crawler",
@@ -340,6 +387,7 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
         if (
             status_code < 400
             and classification not in ["soft_404", "request_error"]
+            and not is_effective_redirect(requested_url, final_url)
         ):
             pages_by_final_url[final_url] = page
 
@@ -354,18 +402,85 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
         try:
             response = client.get(url)
         except Exception as exc:
-            discovered.append({
-                "source": "wordlist",
-                "requested_url": url,
-                "final_url": url,
-                "status_code": "error",
-                "content_type": "",
-                "length": 0,
-                "classification": "request_error",
-                "title": "",
-                "observation": str(exc)
-            })
-            continue
+            request_error_count += 1
+            if is_ssl_cert_error(exc):
+                ssl_error_count += 1
+
+            if (
+                not ssl_fallback_applied
+                and bool(getattr(client, "verify_ssl", True))
+                and is_ssl_cert_error(exc)
+            ):
+                ssl_fallback_applied = True
+                client.verify_ssl = False
+                try:
+                    response = client.get(url)
+                except Exception as retry_exc:
+                    # Optional fallback: try plain HTTP if HTTPS certificate chain is broken.
+                    fallback_url = to_http_url(url)
+                    if fallback_url != url:
+                        try:
+                            response = client.get(fallback_url)
+                            url = fallback_url
+                        except Exception:
+                            discovered.append({
+                                "source": "wordlist",
+                                "requested_url": url,
+                                "final_url": url,
+                                "status_code": "error",
+                                "content_type": "",
+                                "length": 0,
+                                "classification": "request_error",
+                                "title": "",
+                                "observation": f"SSL fallback retry failed: {retry_exc}"
+                            })
+                            continue
+                    else:
+                        discovered.append({
+                            "source": "wordlist",
+                            "requested_url": url,
+                            "final_url": url,
+                            "status_code": "error",
+                            "content_type": "",
+                            "length": 0,
+                            "classification": "request_error",
+                            "title": "",
+                            "observation": f"SSL fallback retry failed: {retry_exc}"
+                        })
+                        continue
+            else:
+                discovered.append({
+                    "source": "wordlist",
+                    "requested_url": url,
+                    "final_url": url,
+                    "status_code": "error",
+                    "content_type": "",
+                    "length": 0,
+                    "classification": "request_error",
+                    "title": "",
+                    "observation": str(exc)
+                })
+
+                if request_error_count >= 30:
+                    ratio = ssl_error_count / max(request_error_count, 1)
+                    if ratio >= 0.8:
+                        discovered.append({
+                            "source": "wordlist",
+                            "requested_url": base_url,
+                            "final_url": base_url,
+                            "status_code": "error",
+                            "content_type": "",
+                            "length": 0,
+                            "classification": "request_error",
+                            "title": "",
+                            "observation": (
+                                "Discovery detenido anticipadamente: alta tasa de errores SSL/certificado. "
+                                "Revisar certificado del objetivo o desactivar verificación SSL para esta auditoría."
+                            )
+                        })
+                        break
+
+                continue
 
         final_url = normalize_url(response.url or url)
         html = response.text or ""
@@ -416,6 +531,7 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
             "total_discovered": len(discovered),
             "reportable_discovered": len(reportable_items),
             "html_pages": len(pages_by_final_url),
+            "request_errors": len([x for x in discovered if x.get("classification") == "request_error"]),
             "auth_routes": len([x for x in reportable_items if x.get("classification") == "auth"]),
             "registration_routes": len([x for x in reportable_items if x.get("classification") == "registration"]),
             "protected_routes": len([x for x in reportable_items if "protected" in str(x.get("classification", ""))]),

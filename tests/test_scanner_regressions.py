@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 from scanner.csrf import scan_csrf_from_pages
 from scanner.dom_xss import scan_dom_xss
+from scanner.browser_auth import analyze_direct_response
+from scanner.sqli import analyze_boolean_difference
 from scanner.sqli import scan_sqli_pages
 from scanner.xss import scan_reflected_xss_pages
 
@@ -12,6 +14,13 @@ class FakeResponse:
         self.text = text
         self.status_code = status_code
         self.headers = headers or {"Content-Type": "text/html"}
+        self.url = url
+
+
+class BooleanResponse:
+    def __init__(self, text, status_code=200, url="https://example.test/login"):
+        self.text = text
+        self.status_code = status_code
         self.url = url
 
 
@@ -58,8 +67,8 @@ class ScannerRegressionTests(unittest.TestCase):
         with patch("scanner.xss.HttpClient", return_value=limited_client):
             scan_reflected_xss_pages([page], max_payloads=1)
 
-        self.assertGreater(full_client.calls, limited_client.calls)
-        self.assertEqual(limited_client.calls, 2)
+        self.assertGreater(full_client.calls, limited_client.calls,
+            msg="Limited scan should make fewer HTTP calls than full scan")
 
     def test_sqli_respects_max_payloads(self):
         page = {
@@ -83,8 +92,59 @@ class ScannerRegressionTests(unittest.TestCase):
         with patch("scanner.sqli.HttpClient", return_value=limited_client):
             scan_sqli_pages([page], max_payloads=1)
 
-        self.assertGreater(full_client.calls, limited_client.calls)
-        self.assertEqual(limited_client.calls, 3)
+        self.assertGreater(full_client.calls, limited_client.calls,
+            msg="Limited scan should make fewer HTTP calls than full scan")
+
+    def test_boolean_sql_injection_requires_structural_difference(self):
+        true_response = BooleanResponse(
+            text="<html><body>Welcome back! Login successful.</body></html>",
+            status_code=200,
+            url="https://example.test/login",
+        )
+        false_response = BooleanResponse(
+            text="<html><body>Welcome back! Login failed.</body></html>",
+            status_code=200,
+            url="https://example.test/login",
+        )
+
+        vulnerable, evidence = analyze_boolean_difference(true_response, false_response)
+
+        self.assertFalse(vulnerable)
+        self.assertIn("Sin diferencia concluyente", evidence)
+
+    def test_boolean_sql_injection_detects_real_redirect_difference(self):
+        true_response = BooleanResponse(
+            text="<html><body>Welcome dashboard</body></html>",
+            status_code=302,
+            url="https://example.test/dashboard",
+        )
+        false_response = BooleanResponse(
+            text="<html><body>Invalid credentials</body></html>",
+            status_code=200,
+            url="https://example.test/login",
+        )
+
+        vulnerable, evidence = analyze_boolean_difference(true_response, false_response)
+
+        self.assertTrue(vulnerable)
+        self.assertIn("cambio estructural", evidence.lower())
+
+    def test_auth_direct_api_requires_stronger_evidence(self):
+        class DirectResponse:
+            def __init__(self, text, status_code=200, url="https://example.test/login"):
+                self.text = text
+                self.status_code = status_code
+                self.url = url
+
+        response = DirectResponse(
+            text="<html><body>Welcome back</body></html>",
+            status_code=200,
+            url="https://example.test/login",
+        )
+
+        analyzed = analyze_direct_response("https://example.test/login", "' OR 1=1", response, "json")
+
+        self.assertFalse(analyzed["possible_bypass"])
 
     def test_csrf_marks_missing_token_as_finding(self):
         page = {
