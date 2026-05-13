@@ -1,5 +1,9 @@
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import logging
 from scanner.http_client import HttpClient
+
+
+logger = logging.getLogger(__name__)
 
 
 PATH_PARAM_HINTS = [
@@ -84,7 +88,7 @@ def _probe(client, url_or_none, payload, param_label):
                 "recommendation": "Normalizar rutas, aplicar allowlist, aislar directorios y evitar acceso directo a rutas de usuario."
             }
     except Exception:
-        pass
+        logger.debug("Fallo en _probe de path traversal", exc_info=True)
     return None
 
 
@@ -145,7 +149,7 @@ def scan_path_traversal(pages):
                             })
                             break
                     except Exception:
-                        pass
+                        logger.debug("Fallo en prueba path traversal POST", exc_info=True)
 
     if not results:
         results.append({

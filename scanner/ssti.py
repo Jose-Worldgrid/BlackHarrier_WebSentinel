@@ -4,8 +4,12 @@ Tests form fields and GET parameters for template evaluation.
 """
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import logging
 from scanner.http_client import HttpClient
 from scanner.forms import extract_forms_from_html
+
+
+logger = logging.getLogger(__name__)
 
 
 # Each entry: (payload, expected_result_string, engine_hint)
@@ -87,7 +91,7 @@ def _probe_forms(client, forms, results):
                     })
                     return  # one finding per form is enough
             except Exception:
-                pass
+                logger.debug("Fallo en prueba SSTI de formulario", exc_info=True)
 
 
 def _probe_get_params(client, page, results):
@@ -127,7 +131,7 @@ def _probe_get_params(client, page, results):
                     })
                     return
             except Exception:
-                pass
+                logger.debug("Fallo en prueba SSTI de parametro GET", exc_info=True)
 
 
 def scan_ssti(pages):

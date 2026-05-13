@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 import sys
 import time
@@ -15,12 +16,13 @@ from scanner.http_client import get_default_proxy_url
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+logger = logging.getLogger(__name__)
 
 if sys.platform.startswith("win"):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:
-        pass
+        logger.debug("No se pudo configurar WindowsProactorEventLoopPolicy", exc_info=True)
 
 
 SUCCESS_MARKERS = [
@@ -214,7 +216,7 @@ def extract_auth_runtime_evidence(login_url, timeout_ms=7000, headless=True):
                             "headers": dict(request.headers),
                         })
                 except Exception:
-                    pass
+                    logger.debug("Error capturando evento request en Playwright", exc_info=True)
 
             def on_response(response):
                 try:
@@ -227,7 +229,7 @@ def extract_auth_runtime_evidence(login_url, timeout_ms=7000, headless=True):
                             "headers": dict(response.headers),
                         })
                 except Exception:
-                    pass
+                    logger.debug("Error capturando evento response en Playwright", exc_info=True)
 
             page.on("request", on_request)
             page.on("response", on_response)
@@ -305,7 +307,7 @@ def extract_auth_runtime_evidence(login_url, timeout_ms=7000, headless=True):
             try:
                 browser.close()
             except Exception:
-                pass
+                logger.debug("Error cerrando navegador tras fallo en extract_auth_runtime_evidence", exc_info=True)
 
         return {
             "ok": False,
@@ -528,7 +530,7 @@ def test_payload_with_browser(login_url, payload, timeout_ms=3500, headless=True
                         "content_type": response.headers.get("content-type", "")
                     })
                 except Exception:
-                    pass
+                    logger.debug("Error registrando respuesta de red en browser_dom", exc_info=True)
 
             page.on("response", on_response)
 
@@ -610,7 +612,7 @@ def test_payload_with_browser(login_url, payload, timeout_ms=3500, headless=True
             try:
                 browser.close()
             except Exception:
-                pass
+                logger.debug("Error cerrando navegador tras fallo en test_payload_with_browser_dom", exc_info=True)
 
         return {
             "tested": False,
@@ -666,6 +668,7 @@ def test_payload_with_browser_intercept(login_url, payload, timeout_ms=3500, hea
                     route.continue_()
                 except Exception:
                     route.continue_()
+                    logger.debug("Error en route handler de Playwright intercept", exc_info=True)
 
             context.route("**/*", route_handler)
 
@@ -679,7 +682,7 @@ def test_payload_with_browser_intercept(login_url, payload, timeout_ms=3500, hea
                         "content_type": response.headers.get("content-type", "")
                     })
                 except Exception:
-                    pass
+                    logger.debug("Error registrando respuesta de red en browser_intercept", exc_info=True)
 
             page.on("response", on_response)
 
@@ -764,7 +767,7 @@ def test_payload_with_browser_intercept(login_url, payload, timeout_ms=3500, hea
             try:
                 browser.close()
             except Exception:
-                pass
+                logger.debug("Error cerrando navegador tras fallo en test_payload_with_browser_intercept", exc_info=True)
 
         return {
             "tested": False,

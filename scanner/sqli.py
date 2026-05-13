@@ -1,8 +1,12 @@
 import time
+import logging
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from difflib import SequenceMatcher
 from scanner.http_client import HttpClient
 from scanner.forms import extract_forms_from_html
+
+
+logger = logging.getLogger(__name__)
 
 
 SQL_ERROR_PATTERNS = [
@@ -217,7 +221,7 @@ def test_time_based(client, form, time_payload_entry, time_threshold=3.5):
         if delay >= time_threshold:
             return True, db, round(delay, 2)
     except Exception:
-        pass
+        logger.debug("Fallo en prueba SQLi time-based", exc_info=True)
 
     return False, db, 0
 
@@ -232,7 +236,7 @@ def test_union_based(client, form):
             if r and UNION_MARKER in (r.text or ""):
                 return n, r
         except Exception:
-            pass
+            logger.debug("Fallo en prueba SQLi UNION-based", exc_info=True)
     return 0, None
 
 
@@ -267,7 +271,7 @@ def scan_url_params_sqli(client, page, error_payloads):
                     })
                     break
             except Exception:
-                pass
+                logger.debug("Fallo en prueba SQLi GET param", exc_info=True)
 
     return results
 
@@ -345,7 +349,7 @@ def scan_sqli_pages(pages, max_payloads=None):
                         })
 
                 except Exception:
-                    pass
+                    logger.debug("Fallo en prueba SQLi boolean-based", exc_info=True)
 
             # Time-based blind SQLi
             for tp in time_payloads:

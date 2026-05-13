@@ -1,7 +1,11 @@
 from bs4 import BeautifulSoup
+import logging
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from scanner.http_client import HttpClient
 from scanner.forms import extract_forms_from_html
+
+
+logger = logging.getLogger(__name__)
 
 
 # Marcador único de auditoría
@@ -150,7 +154,7 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
                     break
 
             except Exception:
-                pass
+                logger.debug("Fallo en prueba XSS GET", exc_info=True)
 
         # Header injection XSS
         for header_name, header_payload in REFLECTIVE_HEADERS:
@@ -166,7 +170,7 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
                         "recommendation": "No reflejar cabeceras HTTP en respuestas sin codificación contextual."
                     })
             except Exception:
-                pass
+                logger.debug("Fallo en prueba XSS por cabeceras", exc_info=True)
 
     if not results:
         results.append({

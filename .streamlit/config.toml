@@ -1,0 +1,13 @@
+[server]
+# Avoid startup stalls from recursive watcher scans in large local workspaces.
+fileWatcherType = "none"
+runOnSave = false
+
+folderWatchBlacklist = [
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".git",
+  "reports",
+  "storage"
+]

@@ -1,7 +1,11 @@
 from urllib.parse import urljoin, urlparse
+import logging
 from bs4 import BeautifulSoup
 from scanner.http_client import HttpClient
 import xml.etree.ElementTree as ET
+
+
+logger = logging.getLogger(__name__)
 
 
 COMMON_PATHS = [
@@ -29,7 +33,7 @@ def discover_from_robots(client, base_url):
                     if value:
                         urls.append(urljoin(base_url, value))
     except Exception:
-        pass
+        logger.debug("Fallo leyendo robots.txt", exc_info=True)
 
     return urls
 
@@ -51,7 +55,7 @@ def discover_from_sitemap(client, base_url):
                 urls.append(elem.text.strip())
 
     except Exception:
-        pass
+        logger.debug("Fallo leyendo sitemap.xml", exc_info=True)
 
     return urls
 

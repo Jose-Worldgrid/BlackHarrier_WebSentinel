@@ -33,6 +33,23 @@ API_PATTERNS = [
 ]
 
 
+ATTACK_TEMPLATES = {
+    "auth": ["SQL Injection Auth (Browser)", "Control de acceso", "CSRF", "JWT"],
+    "registration": ["SQL Injection", "CSRF", "XSS reflejado", "Control de acceso"],
+    "admin_candidate": ["Control de acceso", "SQL Injection", "Path Traversal", "XSS reflejado"],
+    "api_candidate": ["API Discovery", "SQL Injection", "JWT", "Control de acceso"],
+    "spa_page": ["XSS DOM", "XSS reflejado", "SSRF", "Path Traversal"],
+    "unknown": ["SQL Injection", "XSS reflejado", "Open Redirect", "SSRF"],
+}
+
+FRAMEWORK_ATTACK_BONUS = {
+    "nextjs": ["XSS DOM", "API Discovery"],
+    "react": ["XSS DOM", "API Discovery"],
+    "angular": ["XSS DOM", "API Discovery"],
+    "vue": ["XSS DOM", "API Discovery"],
+}
+
+
 def safe_text(value):
     return str(value or "")
 
@@ -69,6 +86,101 @@ def extract_candidate_endpoints(html):
             endpoints.add(match)
 
     return sorted(endpoints)
+
+
+def _domain(url):
+    return urlparse(safe_text(url)).netloc.lower()
+
+
+def selector_hints_from_memory(memory, url):
+    host = _domain(url)
+    hints = {}
+
+    for item in memory.get("successful_selectors", [])[-200:]:
+        selector_url = safe_text(item.get("url"))
+        if host and _domain(selector_url) != host:
+            continue
+        selector_type = safe_text(item.get("selector_type"))
+        selector = safe_text(item.get("selector"))
+        if selector_type and selector:
+            hints[selector_type] = selector
+
+    return hints
+
+
+def endpoint_hints_from_memory(memory, url):
+    host = _domain(url)
+    endpoints = []
+
+    for item in memory.get("endpoint_patterns", [])[-300:]:
+        if host and safe_text(item.get("host")) != host:
+            continue
+        endpoint = safe_text(item.get("endpoint"))
+        if endpoint:
+            endpoints.append(endpoint)
+
+    seen = set()
+    unique = []
+    for endpoint in endpoints:
+        if endpoint not in seen:
+            seen.add(endpoint)
+            unique.append(endpoint)
+    return unique[:20]
+
+
+def _module_success_rate(memory, module_name):
+    stats = memory.get("attack_stats", {}).get(module_name, {})
+    attempts = int(stats.get("attempts", 0))
+    findings = int(stats.get("findings", 0))
+    if attempts <= 0:
+        return 0.0
+    return findings / attempts
+
+
+def build_recommended_attacks(memory, page_type, framework):
+    base = list(ATTACK_TEMPLATES.get(page_type, ATTACK_TEMPLATES["unknown"]))
+    for attack in FRAMEWORK_ATTACK_BONUS.get(framework, []):
+        if attack not in base:
+            base.append(attack)
+
+    scored = []
+    for index, attack in enumerate(base):
+        score = _module_success_rate(memory, attack)
+        # Preserve deterministic order as soft tie-breaker.
+        score += max(0, 0.05 - (index * 0.002))
+        scored.append((attack, score))
+
+    scored.sort(key=lambda item: item[1], reverse=True)
+
+    recommendations = []
+    for attack, score in scored[:6]:
+        if score >= 0.35:
+            priority = "high"
+        elif score >= 0.12:
+            priority = "medium"
+        else:
+            priority = "low"
+        recommendations.append({
+            "name": attack,
+            "priority": priority,
+            "confidence": round(score, 3),
+            "reason": "Priorizado segun efectividad historica del agente para este tipo de objetivo.",
+        })
+
+    return recommendations
+
+
+def confidence_from_memory(memory, page_type, base_confidence):
+    stats = memory.get("page_type_stats", {}).get(page_type, {})
+    seen = int(stats.get("seen", 0))
+    findings = int(stats.get("audits_with_findings", 0))
+
+    if seen <= 0:
+        return base_confidence
+
+    ratio = findings / max(seen, 1)
+    adjustment = min(0.12, ratio * 0.12)
+    return min(0.98, base_confidence + adjustment)
 
 
 def infer_page_type(page):
@@ -167,6 +279,22 @@ def analyze_page(page):
     if endpoints:
         decision.candidate_endpoints = endpoints
         decision.requires_api_endpoint_discovery = True
+
+    memory_endpoint_hints = endpoint_hints_from_memory(memory, url)
+    if memory_endpoint_hints:
+        merged = list(dict.fromkeys(decision.candidate_endpoints + memory_endpoint_hints))
+        decision.candidate_endpoints = merged[:30]
+
+    selector_hints = selector_hints_from_memory(memory, url)
+    if selector_hints:
+        merged_selectors = dict(decision.selectors or {})
+        merged_selectors.update(selector_hints)
+        decision.selectors = merged_selectors
+
+    decision.recommended_attacks = build_recommended_attacks(memory, page_type, framework)
+    decision.confidence = confidence_from_memory(memory, page_type, decision.confidence)
+    decision.metadata["history_candidates"] = len(memory_endpoint_hints)
+    decision.metadata["recommended_attacks_count"] = len(decision.recommended_attacks)
 
     return decision.to_dict()
 

@@ -14,6 +14,7 @@ class AIDecision:
     recommended_next_steps: list[str] = field(default_factory=list)
     selectors: dict[str, str] = field(default_factory=dict)
     candidate_endpoints: list[str] = field(default_factory=list)
+    recommended_attacks: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self):
@@ -28,5 +29,6 @@ class AIDecision:
             "recommended_next_steps": self.recommended_next_steps,
             "selectors": self.selectors,
             "candidate_endpoints": self.candidate_endpoints,
+            "recommended_attacks": self.recommended_attacks,
             "metadata": self.metadata,
         }

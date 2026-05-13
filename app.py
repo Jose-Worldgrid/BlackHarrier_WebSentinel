@@ -37,8 +37,8 @@ from scanner.path_traversal import scan_path_traversal
 from scanner.dependency_exposure import scan_dependency_exposure
 from scanner.discovery import discover_surface
 from scanner.auth_sqli import scan_auth_sqli
-from scanner.ai_agent import enrich_pages_with_ai_context
-from scanner.browser_auth import extract_auth_runtime_evidence
+from scanner.ai_agent import enrich_pages_with_ai_context, record_audit_feedback
+from scanner.ai_agent.memory import load_memory
 
 from storage.database import init_db, save_audit
 from reports.word_report import generate_word_report
@@ -74,6 +74,25 @@ def _get_report_bytes_if_available(report_path):
             return file.read()
     except Exception:
         return None
+
+
+def _extract_auth_runtime_evidence_safe(page_url, timeout_ms=8000, headless=True):
+    """Lazy-load Playwright helper to avoid blocking app startup on heavy imports."""
+    try:
+        from scanner.browser_auth import extract_auth_runtime_evidence
+
+        return extract_auth_runtime_evidence(page_url, headless=headless, timeout_ms=timeout_ms)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "url": page_url,
+            "candidate_endpoints": [],
+            "inputs": [],
+            "buttons": [],
+            "network_events": [],
+            "html": "",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 st.markdown("""
@@ -405,6 +424,15 @@ with st.sidebar:
     else:
         max_auth_sqli_payloads = None
 
+    strict_fp_mode = st.checkbox(
+        "Modo estricto anti-falsos positivos",
+        value=True,
+        help=(
+            "Aumenta exigencia de corroboración para posibles hallazgos, "
+            "sin ocultar ni descartar hallazgos importantes."
+        ),
+    )
+
     use_auth = st.checkbox("Usar credenciales de login")
 
     login_url = ""
@@ -514,6 +542,180 @@ def run_offensive_module(label, module_name, func, pages, *args):
     }])
 
 
+def _safe_lower(value):
+    return str(value or "").strip().lower()
+
+
+def _priority_weight(priority):
+    priority = _safe_lower(priority)
+    if priority == "high":
+        return 3.0
+    if priority == "medium":
+        return 2.0
+    if priority == "low":
+        return 1.0
+    return 1.4
+
+
+def _normalize_attack_name(name):
+    aliases = {
+        "sql injection": "SQL Injection",
+        "auth_sqli": "SQL Injection Auth (Browser)",
+        "sql injection auth (browser)": "SQL Injection Auth (Browser)",
+        "xss": "XSS reflejado",
+        "xss reflejado": "XSS reflejado",
+        "xss dom": "XSS DOM",
+        "csrf": "CSRF",
+        "idor": "Control de acceso",
+        "control de acceso": "Control de acceso",
+        "jwt": "JWT",
+        "open redirect": "Open Redirect",
+        "ssrf": "SSRF",
+        "path traversal": "Path Traversal",
+        "ssti": "SSTI",
+        "api discovery": "API Discovery",
+        "exposición de dependencias": "Exposición de dependencias",
+        "dependencia exposure": "Exposición de dependencias",
+    }
+    text = _safe_lower(name)
+    return aliases.get(text, str(name or "").strip())
+
+
+def _collect_ai_preferences(pages):
+    preferences = {}
+
+    for page in pages or []:
+        ai_context = page.get("ai_context") or {}
+        for attack in ai_context.get("recommended_attacks") or []:
+            module_name = _normalize_attack_name(attack.get("name"))
+            if not module_name:
+                continue
+
+            priority = attack.get("priority", "medium")
+            confidence = float(attack.get("confidence", 0.0) or 0.0)
+            score = _priority_weight(priority) + min(confidence, 1.0)
+
+            preferences[module_name] = preferences.get(module_name, 0.0) + score
+
+    return preferences
+
+
+def _extract_target_features(pages):
+    features = {
+        "has_forms": False,
+        "has_query_params": False,
+        "has_auth": False,
+        "has_api": False,
+        "has_admin": False,
+        "has_dynamic_dom": False,
+    }
+
+    for page in pages or []:
+        url = str(page.get("final_url") or page.get("url") or "")
+        ai_context = page.get("ai_context") or {}
+        page_type = _safe_lower(ai_context.get("page_type") or page.get("classification"))
+
+        if page.get("forms") or (page.get("browser_runtime") or {}).get("inputs"):
+            features["has_forms"] = True
+
+        if "?" in url:
+            features["has_query_params"] = True
+
+        if page_type in ["auth", "registration", "protected", "protected_redirect_to_auth"]:
+            features["has_auth"] = True
+
+        if page_type in ["api_candidate", "api"] or "/api" in url.lower():
+            features["has_api"] = True
+
+        if page_type in ["admin_candidate", "admin"] or any(token in url.lower() for token in ["admin", "dashboard", "panel"]):
+            features["has_admin"] = True
+
+        if ai_context.get("requires_browser_dom") or page.get("rendered_html"):
+            features["has_dynamic_dom"] = True
+
+    return features
+
+
+def _memory_module_score(memory, module_name):
+    stats = (memory.get("attack_stats") or {}).get(module_name, {})
+    attempts = int(stats.get("attempts", 0) or 0)
+    findings = int(stats.get("findings", 0) or 0)
+    errors = int(stats.get("errors", 0) or 0)
+
+    if attempts <= 0:
+        return 0.0
+
+    finding_rate = findings / attempts
+    reliability = max(0.0, 1.0 - (errors / attempts))
+    return (finding_rate * 0.75) + (reliability * 0.25)
+
+
+def _contextual_module_boost(module_name, features):
+    boost = 0.0
+
+    if features["has_forms"] and module_name in ["SQL Injection", "XSS reflejado", "CSRF", "SSTI"]:
+        boost += 1.1
+
+    if features["has_query_params"] and module_name in ["Open Redirect", "SQL Injection", "SSRF", "Path Traversal"]:
+        boost += 0.8
+
+    if features["has_auth"] and module_name in ["Control de acceso", "JWT", "CSRF", "SQL Injection"]:
+        boost += 0.9
+
+    if features["has_api"] and module_name in ["API Discovery", "JWT", "Control de acceso", "SQL Injection"]:
+        boost += 0.9
+
+    if features["has_admin"] and module_name in ["Control de acceso", "Path Traversal", "SQL Injection"]:
+        boost += 0.7
+
+    if features["has_dynamic_dom"] and module_name in ["XSS DOM", "XSS reflejado"]:
+        boost += 0.7
+
+    return boost
+
+
+def build_adaptive_parallel_jobs(target_url, pages, effective_pages, auth_client, scan_payload_limit):
+    jobs = [
+        ("XSS reflejado", scan_reflected_xss_pages, (effective_pages, scan_payload_limit)),
+        ("SQL Injection", scan_sqli_pages, (effective_pages, scan_payload_limit)),
+        ("Open Redirect", scan_open_redirect_pages, (effective_pages,)),
+        ("JWT", scan_jwt_from_pages, (effective_pages,)),
+        ("XSS DOM", scan_dom_xss, (effective_pages,)),
+        ("SSTI", scan_ssti, (effective_pages,)),
+        ("SSRF", scan_ssrf_hints, (effective_pages,)),
+        ("Path Traversal", scan_path_traversal, (effective_pages,)),
+        ("Control de acceso", scan_access_control, (target_url, pages, auth_client)),
+        ("Exposición de dependencias", scan_dependency_exposure, (target_url,)),
+    ]
+
+    memory = load_memory()
+    features = _extract_target_features(pages)
+    ai_preferences = _collect_ai_preferences(pages)
+
+    ranked = []
+    for index, (name, func, args) in enumerate(jobs):
+        ai_score = ai_preferences.get(name, 0.0)
+        memory_score = _memory_module_score(memory, name)
+        context_boost = _contextual_module_boost(name, features)
+
+        score = 1.0 + (ai_score * 0.35) + (memory_score * 2.0) + context_boost
+        score += max(0.0, 0.05 - (index * 0.002))
+
+        ranked.append({
+            "name": name,
+            "func": func,
+            "args": args,
+            "score": round(score, 3),
+            "ai_score": round(ai_score, 3),
+            "memory_score": round(memory_score, 3),
+            "context_boost": round(context_boost, 3),
+        })
+
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    ordered_jobs = [(item["name"], item["func"], item["args"]) for item in ranked]
+    return ordered_jobs, ranked, features
+
+
 def build_offensive_assurance_result(all_results, aggressive_mode=False):
     required_modules = [
         "XSS reflejado",
@@ -599,6 +801,173 @@ def build_offensive_assurance_result(all_results, aggressive_mode=False):
         "evidence": evidence,
         "recommendation": recommendation,
     }])
+
+
+def _extract_result_url(item):
+    evidence = str(item.get("Evidencia", "") or "")
+    for token in evidence.replace("|", " ").split():
+        candidate = token.strip(" ,;()[]{}<>'\"")
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return candidate
+    return ""
+
+
+def _module_from_attack_name(name):
+    normalized = _normalize_attack_name(name)
+    return str(normalized or "").strip()
+
+
+def _collect_expected_modules_from_ai(pages):
+    expected = set()
+    for page in pages or []:
+        ai_context = page.get("ai_context") or {}
+        for attack in ai_context.get("recommended_attacks") or []:
+            module_name = _module_from_attack_name(attack.get("name"))
+            if module_name:
+                expected.add(module_name)
+    return expected
+
+
+def _evidence_strength(item):
+    score = 0.0
+    evidence = str(item.get("Evidencia", "") or "").lower()
+    description = str(item.get("Descripción", "") or "").lower()
+
+    if "http://" in evidence or "https://" in evidence:
+        score += 0.9
+    if "payload" in evidence:
+        score += 0.7
+    if "status" in evidence or "código" in evidence or "code" in evidence:
+        score += 0.5
+    if "error" in evidence and "sql" in evidence:
+        score += 0.5
+    if "marcador" in evidence or "marker" in evidence:
+        score += 0.6
+    if "posible" in description:
+        score -= 0.2
+
+    return max(0.0, score)
+
+
+def apply_false_positive_guard(all_results, pages, strict_mode=False):
+    """
+    Conservative anti-FP layer:
+    - Never auto-dismiss confirmed findings.
+    - Flag weak findings with explicit FP risk for manual validation.
+    """
+    reviewed = []
+    expected_modules = _collect_expected_modules_from_ai(pages)
+
+    by_url = {}
+    by_control = {}
+
+    for item in all_results:
+        if str(item.get("Resultado", "")) not in ["Hallazgo", "Posible hallazgo"]:
+            continue
+
+        url = _extract_result_url(item)
+        control = str(item.get("Control", "") or "").strip().lower()
+
+        if url:
+            by_url[url] = by_url.get(url, 0) + 1
+        if control:
+            by_control[control] = by_control.get(control, 0) + 1
+
+    fp_risk_high = 0
+    fp_risk_medium = 0
+    strict_pending = 0
+
+    for item in all_results:
+        current = dict(item)
+        status = str(current.get("Resultado", "") or "")
+
+        if status not in ["Hallazgo", "Posible hallazgo"]:
+            reviewed.append(current)
+            continue
+
+        module_name = str(current.get("Módulo", "") or "")
+        url = _extract_result_url(current)
+        control = str(current.get("Control", "") or "").strip().lower()
+
+        strength = _evidence_strength(current)
+        corroboration = 0.0
+
+        if url and by_url.get(url, 0) >= 2:
+            corroboration += 0.8
+        if control and by_control.get(control, 0) >= 2:
+            corroboration += 0.6
+        if module_name in expected_modules:
+            corroboration += 0.5
+
+        confidence = strength + corroboration
+
+        if status == "Hallazgo":
+            # Guard-rail: never auto-classify confirmed findings as false positives.
+            current["Evidencia"] = (
+                f"{current.get('Evidencia', '')} | "
+                "Control anti-FP: hallazgo confirmado conservado (sin descarte automático)."
+            )
+            reviewed.append(current)
+            continue
+
+        high_threshold = 1.4 if strict_mode else 1.2
+        medium_threshold = 2.0 if strict_mode else 1.8
+
+        if confidence < high_threshold:
+            fp_risk_high += 1
+            current["Evidencia"] = (
+                f"{current.get('Evidencia', '')} | "
+                "FP-RISK:ALTA (evidencia débil o aislada)."
+            )
+            current["Recomendación"] = (
+                f"{current.get('Recomendación', '')} "
+                "Validar manualmente con reproducción guiada y evidencia adicional antes de concluir."
+            ).strip()
+            current["Severidad"] = "Media" if current.get("Severidad") == "Alta" else current.get("Severidad", "Media")
+        elif confidence < medium_threshold:
+            fp_risk_medium += 1
+            current["Evidencia"] = (
+                f"{current.get('Evidencia', '')} | "
+                "FP-RISK:MEDIA (requiere corroboración adicional)."
+            )
+            current["Recomendación"] = (
+                f"{current.get('Recomendación', '')} "
+                "Corroborar con segunda técnica o segundo vector antes de cerrar el dictamen."
+            ).strip()
+
+        if strict_mode and status == "Posible hallazgo" and confidence < 2.2:
+            strict_pending += 1
+            current["Evidencia"] = (
+                f"{current.get('Evidencia', '')} | "
+                "STRICT-REVIEW:PENDIENTE (doble corroboración recomendada)."
+            )
+            current["Recomendación"] = (
+                f"{current.get('Recomendación', '')} "
+                "En modo estricto, reproducir con un segundo vector independiente antes de elevar criticidad."
+            ).strip()
+
+        reviewed.append(current)
+
+    reviewed.extend(normalize_results("Control de calidad AI", [{
+        "control": "Filtro conservador de falsos positivos",
+        "status": "Comprobado",
+        "severity": "Informativa",
+        "description": (
+            "Se aplicó triage anti-FP sin descarte automático de hallazgos confirmados."
+        ),
+        "evidence": (
+            f"Posibles hallazgos con FP-RISK:ALTA={fp_risk_high} | "
+            f"FP-RISK:MEDIA={fp_risk_medium} | "
+            f"STRICT-REVIEW:PENDIENTE={strict_pending} | "
+            f"modo_estricto={bool(strict_mode)}"
+        ),
+        "recommendation": (
+            "Revisar primero los casos FP-RISK:ALTA, luego FP-RISK:MEDIA, "
+            "manteniendo trazabilidad de reproducción."
+        ),
+    }]))
+
+    return reviewed
 
 
 def pipeline_error_result(control, description, evidence, recommendation):
@@ -847,7 +1216,7 @@ def add_browser_runtime_form_if_detected(page, runtime):
         page["rendered_html"] = runtime["html"]
 
 
-def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_url, use_auth, login_url, username, password, max_auth_sqli_payloads, audit_name):
+def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_url, use_auth, login_url, username, password, max_auth_sqli_payloads, audit_name, strict_fp_mode):
     """Phase 1: crawl, discovery, passive recon. Returns session state dict."""
     all_results = []
     scan_profile = SCAN_MODES.get(scan_mode, {})
@@ -949,10 +1318,7 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
             if not page_url:
                 continue
             dom_status_box.write(f"Renderizando con Playwright: {page_url}")
-            try:
-                runtime = extract_auth_runtime_evidence(page_url, headless=True, timeout_ms=8000)
-            except Exception as exc:
-                runtime = {"ok": False, "url": page_url, "candidate_endpoints": [], "inputs": [], "buttons": [], "network_events": [], "html": "", "error": f"{type(exc).__name__}: {exc}"}
+            runtime = _extract_auth_runtime_evidence_safe(page_url, headless=True, timeout_ms=8000)
             add_browser_runtime_form_if_detected(page, runtime)
             dom_progress.progress(index / len(runtime_candidates))
 
@@ -1003,6 +1369,7 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         "audit_name": audit_name,
         "target_url": target_url,
         "sqli_intensity": st.session_state.get("_sqli_intensity", "Normal - 30 payloads"),
+        "strict_fp_mode": bool(strict_fp_mode),
     }
 
 
@@ -1068,6 +1435,7 @@ if run_scan:
         password=password,
         max_auth_sqli_payloads=max_auth_sqli_payloads,
         audit_name=audit_name,
+        strict_fp_mode=strict_fp_mode,
     )
 
     st.session_state["phase1_state"] = state
@@ -1141,6 +1509,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     scan_payload_limit    = state["scan_payload_limit"]
     effective_auth_payload_limit = state["effective_auth_payload_limit"]
     sqli_intensity        = state["sqli_intensity"]
+    strict_fp_mode        = bool(state.get("strict_fp_mode", True))
     attackable_pages      = state["attackable_pages"]
     auth_attack_pages     = state["auth_attack_pages"]
     effective_proxy_url   = state["effective_proxy_url"]
@@ -1211,18 +1580,33 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         "classification": "fallback_target",
     }]
 
-    parallel_jobs = [
-        ("XSS reflejado",           scan_reflected_xss_pages, (effective_pages, scan_payload_limit)),
-        ("SQL Injection",            scan_sqli_pages,           (effective_pages, scan_payload_limit)),
-        ("Open Redirect",            scan_open_redirect_pages,  (effective_pages,)),
-        ("JWT",                      scan_jwt_from_pages,        (effective_pages,)),
-        ("XSS DOM",                  scan_dom_xss,               (effective_pages,)),
-        ("SSTI",                     scan_ssti,                  (effective_pages,)),
-        ("SSRF",                     scan_ssrf_hints,            (effective_pages,)),
-        ("Path Traversal",           scan_path_traversal,        (effective_pages,)),
-        ("Control de acceso",        scan_access_control,        (target_url, pages, auth_client)),
-        ("Exposición de dependencias", scan_dependency_exposure, (target_url,)),
-    ]
+    parallel_jobs, ranked_plan, target_features = build_adaptive_parallel_jobs(
+        target_url=target_url,
+        pages=pages,
+        effective_pages=effective_pages,
+        auth_client=auth_client,
+        scan_payload_limit=scan_payload_limit,
+    )
+
+    with st.expander("Plan ofensivo inteligente (AI Planner)", expanded=False):
+        st.caption(
+            "El orden se calcula por puntuación contextual: recomendaciones AI por página, "
+            "efectividad histórica por módulo y señales detectadas en la superficie actual."
+        )
+        st.json({
+            "strict_fp_mode": bool(strict_fp_mode),
+            "target_features": target_features,
+            "ranked_modules": [
+                {
+                    "module": item["name"],
+                    "score": item["score"],
+                    "ai_score": item["ai_score"],
+                    "memory_score": item["memory_score"],
+                    "context_boost": item["context_boost"],
+                }
+                for item in ranked_plan
+            ],
+        })
 
     parallel_status = st.empty()
     parallel_status.info(f"Ejecutando {len(parallel_jobs)} módulos ofensivos en paralelo...")
@@ -1306,6 +1690,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     attack_finished("Ejecución ofensiva finalizada.")
 
     all_results.extend(build_offensive_assurance_result(all_results, aggressive_mode=is_aggressive_mode))
+    all_results = apply_false_positive_guard(all_results, pages, strict_mode=strict_fp_mode)
 
     df = pd.DataFrame(all_results)
 
@@ -1357,6 +1742,22 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             description="No se pudo guardar la auditoría en base de datos.",
             evidence=traceback.format_exc(),
             recommendation="Comprobar permisos de escritura y estado del backend de almacenamiento.",
+        )]))
+
+    try:
+        learning_summary = record_audit_feedback(target_url, pages, all_results)
+        st.caption(
+            "AI Agent aprendizaje actualizado: "
+            f"{learning_summary.get('results', 0)} resultados, "
+            f"{learning_summary.get('findings', 0)} hallazgos, "
+            f"{learning_summary.get('errors', 0)} errores."
+        )
+    except Exception:
+        all_results.extend(normalize_results("AI Agent", [pipeline_error_result(
+            control="AI Agent Learning",
+            description="No se pudo actualizar el aprendizaje del agente AI.",
+            evidence=traceback.format_exc(),
+            recommendation="Revisar storage/ai_agent_memory.json y permisos de escritura.",
         )]))
         df = pd.DataFrame(all_results)
         st.session_state["last_audit_df"] = df

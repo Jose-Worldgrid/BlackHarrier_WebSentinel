@@ -1,7 +1,11 @@
 import re
+import logging
 from difflib import SequenceMatcher
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from scanner.http_client import HttpClient
+
+
+logger = logging.getLogger(__name__)
 
 
 SENSITIVE_ENDPOINTS = [
@@ -117,7 +121,7 @@ def _test_idor_param(client, url, param, original_value, original_response):
                 })
                 break
         except Exception:
-            pass
+            logger.debug("Fallo en prueba IDOR por parámetro", exc_info=True)
     return results
 
 

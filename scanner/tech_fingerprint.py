@@ -1,6 +1,10 @@
 import re
+import logging
 from bs4 import BeautifulSoup
 from scanner.http_client import HttpClient
+
+
+logger = logging.getLogger(__name__)
 
 
 KNOWN_CLIENT_LIBS = {
@@ -61,7 +65,7 @@ def scan_technology_fingerprint(url: str, pages):
             })
 
     except Exception:
-        pass
+        logger.debug("Fallo en fingerprinting de cabeceras servidor", exc_info=True)
 
     detected = []
 
