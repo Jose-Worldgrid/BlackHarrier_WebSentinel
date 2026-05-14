@@ -3,6 +3,7 @@ import os
 import traceback
 import concurrent.futures
 from datetime import datetime
+from requests.utils import dict_from_cookiejar
 
 import pandas as pd
 import streamlit as st
@@ -37,7 +38,15 @@ from scanner.path_traversal import scan_path_traversal
 from scanner.dependency_exposure import scan_dependency_exposure
 from scanner.discovery import discover_surface
 from scanner.auth_sqli import scan_auth_sqli
-from scanner.ai_agent import enrich_pages_with_ai_context, record_audit_feedback
+from scanner import network_recon
+from scanner.user_enum import scan_user_enumeration
+from scanner.port_services import scan_port_services
+from scanner.vuln_correlation import scan_vulnerability_correlation
+from scanner.ai_agent import (
+    enrich_pages_with_ai_context,
+    record_audit_feedback,
+    AdaptiveOrchestrator,
+)
 from scanner.ai_agent.memory import load_memory
 
 from storage.database import init_db, save_audit
@@ -93,6 +102,99 @@ def _extract_auth_runtime_evidence_safe(page_url, timeout_ms=8000, headless=True
             "html": "",
             "error": f"{type(exc).__name__}: {exc}",
         }
+
+
+def _auto_detect_login_url(target_url, client, max_pages=80):
+    """Find likely login endpoint from crawled pages when login URL is not provided."""
+    auth_keywords = ["login", "signin", "auth", "session", "iniciar-sesion", "inicio-sesion"]
+    register_keywords = ["register", "signup", "registro", "alta"]
+
+    try:
+        pages, _ = crawl_site(target_url, max_pages=max_pages, client=client)
+    except Exception as exc:
+        return "", {
+            "control": "Autenticación - autodetección",
+            "status": "Error",
+            "severity": "Media",
+            "description": "No se pudo ejecutar la autodetección de URL de login.",
+            "evidence": str(exc),
+            "recommendation": "Indicar URL de login manualmente.",
+        }
+
+    best_url = ""
+    best_score = -1
+    checked = 0
+
+    for page in pages or []:
+        url = str(page.get("final_url") or page.get("url") or "")
+        if not url:
+            continue
+        checked += 1
+
+        lower_url = url.lower()
+        html_body = str(page.get("html") or "").lower()
+        classification = str(page.get("classification") or "").lower()
+
+        score = 0
+        if any(k in lower_url for k in auth_keywords):
+            score += 3
+        if any(k in lower_url for k in register_keywords):
+            score -= 2
+        if "password" in html_body:
+            score += 4
+        if any(k in html_body for k in ["name=\"email\"", "name=\"username\"", "type=\"email\""]):
+            score += 2
+        if "auth" in classification:
+            score += 2
+
+        if score > best_score:
+            best_score = score
+            best_url = url
+
+    if best_url and best_score >= 4:
+        return best_url, {
+            "control": "Autenticación - autodetección",
+            "status": "Detectado",
+            "severity": "Informativa",
+            "description": "Se detectó automáticamente una URL candidata de login.",
+            "evidence": f"Login detectado: {best_url} | Score: {best_score} | URLs analizadas: {checked}",
+            "recommendation": "Si no corresponde al login real, indicar URL manualmente.",
+        }
+
+    return "", {
+        "control": "Autenticación - autodetección",
+        "status": "No evidenciado",
+        "severity": "Baja",
+        "description": "No se detectó un login claro durante el reconocimiento inicial.",
+        "evidence": f"URLs analizadas: {checked} | Mejor score observado: {best_score}",
+        "recommendation": "Indicar URL de login manualmente para ampliar cobertura autenticada.",
+    }
+
+
+def _collect_login_candidates(target_url, pages, manual_login_url=""):
+    candidates = []
+    if manual_login_url:
+        candidates.append(manual_login_url.strip())
+
+    auth_markers = ["login", "signin", "auth", "session", "iniciar-sesion", "inicio-sesion"]
+    reg_markers = ["register", "signup", "registro", "alta"]
+
+    for page in pages or []:
+        url = str(page.get("final_url") or page.get("url") or "").strip()
+        if not url:
+            continue
+        lower_url = url.lower()
+        classification = str(page.get("classification") or "").lower()
+        has_auth_hint = "auth" in classification or any(x in lower_url for x in auth_markers)
+        has_reg_hint = "registration" in classification or any(x in lower_url for x in reg_markers)
+        if has_auth_hint and not has_reg_hint:
+            candidates.append(url)
+
+    if not candidates:
+        candidates.append(target_url)
+
+    # Preserve order while deduplicating
+    return list(dict.fromkeys(candidates))[:8]
 
 
 st.markdown("""
@@ -386,7 +488,7 @@ with st.sidebar:
     scan_mode = st.selectbox(
         "Modo de auditoría",
         list(SCAN_MODES.keys()),
-        index=1,
+        index=list(SCAN_MODES.keys()).index("Full") if "Full" in SCAN_MODES else 1,
     )
 
     verify_ssl = st.checkbox(
@@ -440,7 +542,12 @@ with st.sidebar:
     password = ""
 
     if use_auth:
-        login_url = st.text_input("URL de login", value=target_url)
+        login_url = st.text_input(
+            "URL de login (opcional)",
+            value="",
+            placeholder="https://objetivo.com/login",
+            help="Si lo dejas vacío, el scanner intentará detectarla automáticamente.",
+        )
         username = st.text_input("Usuario")
         password = st.text_input("Contraseña", type="password")
 
@@ -714,6 +821,45 @@ def build_adaptive_parallel_jobs(target_url, pages, effective_pages, auth_client
     ranked.sort(key=lambda item: item["score"], reverse=True)
     ordered_jobs = [(item["name"], item["func"], item["args"]) for item in ranked]
     return ordered_jobs, ranked, features
+
+
+def reprioritize_for_authenticated_session(parallel_jobs, ranked_plan, auth_status):
+    """When valid creds are confirmed, prioritize post-auth controls over auth-entry vectors."""
+    if auth_status != "Autenticado":
+        return parallel_jobs, ranked_plan
+
+    priority_order = {
+        "Control de acceso": 100,
+        "JWT": 95,
+        "API Discovery": 90,
+        "SQL Injection": 80,
+        "Path Traversal": 75,
+        "SSRF": 72,
+        "SSTI": 68,
+        "XSS DOM": 65,
+        "XSS reflejado": 62,
+        "Open Redirect": 55,
+        "Exposición de dependencias": 45,
+    }
+
+    reweighted = []
+    for item in ranked_plan:
+        module = item["name"]
+        auth_bonus = priority_order.get(module, 10)
+        updated = dict(item)
+        updated["score"] = round(float(item.get("score", 0.0)) + auth_bonus, 3)
+        updated["auth_bonus"] = auth_bonus
+        reweighted.append(updated)
+
+    reweighted.sort(key=lambda row: row["score"], reverse=True)
+    reordered_jobs = []
+    for row in reweighted:
+        for name, func, args in parallel_jobs:
+            if name == row["name"]:
+                reordered_jobs.append((name, func, args))
+                break
+
+    return reordered_jobs, reweighted
 
 
 def build_offensive_assurance_result(all_results, aggressive_mode=False):
@@ -1223,6 +1369,8 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
     scan_delay = float(scan_profile.get("delay", 0.35))
     scan_payload_limit = scan_profile.get("max_payloads")
     is_aggressive_mode = bool(scan_profile.get("aggressive", False))
+    port_scan_profile = str(scan_profile.get("port_scan_profile", "common"))
+    vuln_corr_profile = str(scan_profile.get("vuln_correlation_profile", "standard"))
     effective_auth_payload_limit = resolve_payload_limit(scan_payload_limit, max_auth_sqli_payloads)
     effective_proxy_url = burp_proxy_url.strip() if use_burp_proxy else None
 
@@ -1231,6 +1379,9 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
     # porque no realizan pruebas ofensivas. Esto evita errores con certificados autofirmados.
     _configure_http_defaults_compat(delay=scan_delay, verify_ssl=False, proxy_url=effective_proxy_url)
     auth_client = HttpClient(verify_ssl=False)
+    auth_status = "No configurado"
+    auth_used_login_url = ""
+    auth_cookies = {}
 
     st.markdown(
         f"""
@@ -1242,11 +1393,6 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         """,
         unsafe_allow_html=True,
     )
-
-    if use_auth:
-        auth_client, auth_results = authenticate(login_url, username, password)
-        auth_client.verify_ssl = verify_ssl
-        all_results.extend(normalize_results("Autenticación", auth_results))
 
     with st.spinner("Crawling completo del objetivo..."):
         try:
@@ -1289,6 +1435,99 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         pages = crawler_pages
         st.warning("Discovery activo no devolvió páginas útiles. Se continúa con la superficie del crawler.")
 
+    # Safe, low-noise user enumeration before trying provided credentials.
+    enum_results = scan_user_enumeration(
+        pages=pages,
+        client=auth_client,
+        username_hint=username if use_auth else "",
+    )
+    all_results.extend(normalize_results("Enumeración de usuarios", enum_results))
+
+    # Auth flow after initial mapping: discover first, then try credentials, then expand scope post-login.
+    if use_auth and username and password:
+        effective_login_url = (login_url or "").strip()
+
+        if not effective_login_url:
+            st.info("No se indicó URL de login. Intentando autodetección sobre la superficie descubierta...")
+            detected_login_url, autodetect_result = _auto_detect_login_url(target_url, auth_client)
+            all_results.extend(normalize_results("Autenticación", [autodetect_result]))
+            if detected_login_url:
+                effective_login_url = detected_login_url
+                st.info(f"URL de login detectada automáticamente: {detected_login_url}")
+
+        login_candidates = _collect_login_candidates(target_url, pages, manual_login_url=effective_login_url)
+
+        st.info(f"Probando credenciales en {len(login_candidates)} endpoint(s) de login detectados...")
+        chosen_indeterminate_client = None
+        chosen_indeterminate_url = ""
+
+        for candidate in login_candidates:
+            attempt_client, attempt_results = authenticate(candidate, username, password)
+            attempt_client.verify_ssl = verify_ssl
+            all_results.extend(normalize_results("Autenticación", attempt_results))
+
+            status = str((attempt_results or [{}])[0].get("status", "")).strip()
+            if status == "Autenticado":
+                auth_client = attempt_client
+                auth_status = status
+                auth_used_login_url = candidate
+                break
+
+            if status == "Indeterminado" and not chosen_indeterminate_client:
+                chosen_indeterminate_client = attempt_client
+                chosen_indeterminate_url = candidate
+
+        if auth_status != "Autenticado" and chosen_indeterminate_client is not None:
+            auth_client = chosen_indeterminate_client
+            auth_status = "Indeterminado"
+            auth_used_login_url = chosen_indeterminate_url
+
+        # If auth appears successful (or plausible), run post-auth crawl/discovery to expand protected scope.
+        if auth_status in ["Autenticado", "Indeterminado"]:
+            with st.spinner("Sesión establecida. Ejecutando recrawl post-login para descubrir superficie autenticada..."):
+                try:
+                    post_auth_pages, _ = crawl_site(target_url, max_pages=None, client=auth_client)
+                    merged_seed = dedupe_pages_by_url((pages or []) + (post_auth_pages or []))
+                    post_auth_discovery = discover_surface(
+                        target_url,
+                        client=auth_client,
+                        seed_pages=merged_seed,
+                        max_active_checks=500 if is_aggressive_mode else 300,
+                    )
+
+                    post_pages = post_auth_discovery.get("pages") or []
+                    pages = dedupe_pages_by_url(merged_seed + post_pages)
+
+                    combined_discovered = list(
+                        dict.fromkeys((discovery.get("discovered") or []) + (post_auth_discovery.get("discovered") or []))
+                    )
+                    discovery["discovered"] = combined_discovered
+
+                    post_results = post_auth_discovery.get("results") or []
+                    if post_results:
+                        all_results.extend(normalize_results("Discovery post-login", post_results))
+
+                    all_results.extend(normalize_results("Autenticación", [{
+                        "control": "Cobertura post-login",
+                        "status": "Detectado",
+                        "severity": "Informativa",
+                        "description": "Se amplió superficie tras autenticación para descubrir rutas protegidas.",
+                        "evidence": f"Login usado: {auth_used_login_url or 'autodetectado'} | URLs post-login: {len(post_pages)}",
+                        "recommendation": "Priorizar revisión de rutas administrativas descubiertas en sesión autenticada.",
+                    }]))
+                except Exception:
+                    all_results.extend(normalize_results("Autenticación", [pipeline_error_result(
+                        control="Cobertura post-login",
+                        description="No se pudo completar el recrawl/discovery post-login.",
+                        evidence=traceback.format_exc(),
+                        recommendation="Validar vigencia de sesión, redirecciones y defensas anti-bot en login.",
+                    )]))
+
+        try:
+            auth_cookies = dict(dict_from_cookiejar(auth_client.session.cookies))
+        except Exception:
+            auth_cookies = {}
+
     try:
         pages = enrich_pages_with_ai_context(pages)
     except Exception:
@@ -1327,6 +1566,9 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
     all_results.extend(normalize_results("Discovery", discovery.get("results") or []))
     all_results.extend(run_module("Mapeando URLs asociadas...", "Mapa de URLs", map_urls, target_url, pages, auth_client))
     all_results.extend(run_module("Reconocimiento tecnológico...", "Reconocimiento", scan_recon, target_url))
+    all_results.extend(run_module("Resolviendo IP/DNS y exposición de versión...", "Red e infraestructura", network_recon.scan_network_recon, target_url))
+    all_results.extend(run_module("Escaneando puertos/servicios comunes...", "Puertos y servicios", scan_port_services, target_url, port_scan_profile))
+    all_results.extend(run_module("Correlando exposición tecnológica (Nessus-like)...", "Correlación de vulnerabilidades", scan_vulnerability_correlation, target_url, vuln_corr_profile))
     all_results.extend(run_module("Validando TLS/HTTPS...", "TLS/HTTPS", scan_tls, target_url))
     all_results.extend(run_module("Analizando cabeceras...", "Cabeceras de seguridad", scan_security_headers, target_url, auth_client))
     all_results.extend(run_module("Analizando cookies...", "Cookies", scan_cookies, target_url))
@@ -1358,6 +1600,9 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         "discovered_urls": discovered_urls,
         "crawler_pages": crawler_pages,
         "auth_client_cfg": {"verify_ssl": verify_ssl},
+        "auth_status": auth_status,
+        "auth_used_login_url": auth_used_login_url,
+        "auth_cookies": auth_cookies,
         "attackable_pages": attackable_pages,
         "auth_attack_pages": auth_attack_pages,
         "scan_profile": scan_profile,
@@ -1366,6 +1611,8 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         "effective_auth_payload_limit": effective_auth_payload_limit,
         "effective_proxy_url": effective_proxy_url,
         "scan_mode": scan_mode,
+        "port_scan_profile": port_scan_profile,
+        "vuln_corr_profile": vuln_corr_profile,
         "audit_name": audit_name,
         "target_url": target_url,
         "sqli_intensity": st.session_state.get("_sqli_intensity", "Normal - 30 payloads"),
@@ -1513,6 +1760,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     attackable_pages      = state["attackable_pages"]
     auth_attack_pages     = state["auth_attack_pages"]
     effective_proxy_url   = state["effective_proxy_url"]
+    auth_status           = str(state.get("auth_status", "")).strip()
 
     offensive_delay = min(float(state["scan_profile"].get("delay", 0.35)), 0.05)
 
@@ -1522,6 +1770,10 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         proxy_url=effective_proxy_url,
     )
     auth_client = HttpClient()
+    auth_client.verify_ssl = state["auth_client_cfg"]["verify_ssl"]
+    auth_cookies = state.get("auth_cookies") or {}
+    if auth_cookies:
+        auth_client.session.cookies.update(auth_cookies)
 
     st.markdown("### Ejecución ofensiva en tiempo real")
     attack_status = st.empty()
@@ -1587,6 +1839,11 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         auth_client=auth_client,
         scan_payload_limit=scan_payload_limit,
     )
+    parallel_jobs, ranked_plan = reprioritize_for_authenticated_session(
+        parallel_jobs,
+        ranked_plan,
+        auth_status,
+    )
 
     with st.expander("Plan ofensivo inteligente (AI Planner)", expanded=False):
         st.caption(
@@ -1651,16 +1908,28 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         all_results.extend(parallel_results.get(name, []))
 
     # ── Auth SQLi (Playwright browser — sequential, must stay single-threaded) ──
-    with st.spinner(f"Probando SQLi en autenticación ({sqli_intensity})..."):
-        auth_sqli_results = scan_auth_sqli(
-            pages=auth_attack_pages,
-            client=auth_client,
-            max_payloads=effective_auth_payload_limit,
-            headless=True,
-            progress_callback=attack_progress_event,
-        )
+    if auth_status == "Autenticado":
+        auth_sqli_results = [{
+            "control": "SQLi/bypass en autenticación",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "Se omitió bypass SQLi de login porque las credenciales válidas ya otorgaron acceso.",
+            "evidence": "Autenticación previa confirmada en Fase 1.",
+            "recommendation": "Enfocar pruebas en autorización post-login, exposición de datos y privilegios.",
+        }]
+    else:
+        with st.spinner(f"Probando SQLi en autenticación ({sqli_intensity})..."):
+            auth_sqli_results = scan_auth_sqli(
+                pages=auth_attack_pages,
+                client=auth_client,
+                max_payloads=effective_auth_payload_limit,
+                headless=True,
+                progress_callback=attack_progress_event,
+            )
 
     should_escalate_auth = (
+        auth_status != "Autenticado"
+        and
         sqli_intensity == "Normal - 30 payloads"
         and auth_attack_pages
         and auth_sqli_results
@@ -1699,6 +1968,81 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     st.session_state["last_audit_pages"] = pages
     st.session_state["last_audit_discovery"] = discovery
     st.session_state["last_report_bytes"] = None
+
+    # ── Adaptive Learning Integration ─────────────────────────────────
+    try:
+        orchestrator = AdaptiveOrchestrator()
+
+        # Extract frameworks and WAF types from discovery results
+        detected_frameworks = []
+        detected_waf = []
+        for result in all_results:
+            if result.get("Módulo") == "Reconocimiento":
+                framework_info = result.get("evidence", "")
+                if "react" in framework_info.lower():
+                    detected_frameworks.append("react")
+                if "next.js" in framework_info.lower():
+                    detected_frameworks.append("next.js")
+                if "angular" in framework_info.lower():
+                    detected_frameworks.append("angular")
+                if "vue" in framework_info.lower():
+                    detected_frameworks.append("vue")
+                if "django" in framework_info.lower():
+                    detected_frameworks.append("django")
+                if "flask" in framework_info.lower():
+                    detected_frameworks.append("flask")
+                if "cloudflare" in framework_info.lower():
+                    detected_waf.append("cloudflare")
+                if "akamai" in framework_info.lower():
+                    detected_waf.append("akamai")
+                if "modsecurity" in framework_info.lower():
+                    detected_waf.append("modsecurity")
+
+        # Record learnings from this audit
+        orchestrator.continuous_learning_from_audit(
+            audit_results={
+                "detected_frameworks": list(set(detected_frameworks)),
+                "detected_waf": list(set(detected_waf)),
+                "findings": [
+                    {
+                        "attack_type": result.get("Módulo", "unknown"),
+                        "payload": result.get("evidence", "")[:100],
+                        "severity": result.get("Severidad", "Media"),
+                        "description": result.get("Descripción", ""),
+                    }
+                    for result in all_results
+                    if result.get("Resultado") in ["Hallazgo", "Posible hallazgo"]
+                ],
+            },
+            target_url=target_url,
+        )
+
+        # Display adaptation metrics
+        adaptation_summary = orchestrator.get_adaptation_summary()
+        with st.expander("📊 Métricas de Aprendizaje Adaptativo", expanded=False):
+            col_fw, col_att, col_bypass, col_env = st.columns(4)
+            col_fw.metric(
+                "🔍 Frameworks Aprendidos",
+                adaptation_summary["total_frameworks_seen"],
+            )
+            col_att.metric(
+                "⚔️ Ataques Registrados",
+                adaptation_summary["total_attacks_recorded"],
+            )
+            col_bypass.metric(
+                "🛡️ Técnicas de Bypass",
+                adaptation_summary["bypass_techniques_learned"],
+            )
+            col_env.metric(
+                "🎯 Entornos Perfilados",
+                adaptation_summary["target_environments_profiled"],
+            )
+            st.caption(
+                f"Último aprendizaje: {adaptation_summary['last_updated']}"
+            )
+
+    except Exception as e:
+        st.warning(f"No se pudo actualizar el aprendizaje adaptativo: {e}")
 
     st.subheader("Resultados")
     finding_statuses = ["Hallazgo", "Posible hallazgo"]

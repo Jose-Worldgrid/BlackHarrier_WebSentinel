@@ -1,0 +1,211 @@
+{
+  "version_rules": [
+    {
+      "id": "CVE-CORR-APACHE-LEGACY",
+      "technology": "apache",
+      "pattern": "apache/?\\s*([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "2.4.58",
+      "severity": "Alta",
+      "title": "Apache HTTP Server version posiblemente vulnerable (< 2.4.59)",
+      "recommendation": "Actualizar Apache a 2.4.59+ y revisar advisories de seguridad recientes."
+    },
+    {
+      "id": "CVE-CORR-NGINX-LEGACY",
+      "technology": "nginx",
+      "pattern": "nginx/?\\s*([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "1.25.3",
+      "severity": "Media",
+      "title": "Nginx version posiblemente legacy (< 1.26.x estable)",
+      "recommendation": "Actualizar Nginx a rama estable 1.26.x o superior y revisar changelogs."
+    },
+    {
+      "id": "CVE-CORR-PHP-LEGACY",
+      "technology": "php",
+      "pattern": "php/?\\s*([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "8.1.99",
+      "severity": "Alta",
+      "title": "PHP 8.1 o inferior — rama próxima a End-of-Life",
+      "recommendation": "Migrar a PHP 8.2+ o 8.3+. PHP 8.1 EOL Nov 2024, PHP 8.0 ya sin soporte."
+    },
+    {
+      "id": "CVE-CORR-PHP7-EOL",
+      "technology": "php7",
+      "pattern": "php/?\\s*(7\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "7.99.99",
+      "severity": "Crítica",
+      "title": "PHP 7.x — END OF LIFE. Sin parches de seguridad.",
+      "recommendation": "Migrar urgentemente a PHP 8.2+. PHP 7 no recibe parches de seguridad."
+    },
+    {
+      "id": "CVE-CORR-JQUERY-OLD",
+      "technology": "jquery",
+      "pattern": "jquery[-./]([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "3.6.4",
+      "severity": "Media",
+      "title": "jQuery posiblemente desactualizado — riesgo XSS conocido en versiones < 3.7",
+      "recommendation": "Actualizar jQuery a 3.7.1+ y revisar CVE-2019-11358, CVE-2020-11022/23."
+    },
+    {
+      "id": "CVE-CORR-JQUERY-MIGRATE-OLD",
+      "technology": "jquery-migrate",
+      "pattern": "jquery-migrate[-./]([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "3.3.2",
+      "severity": "Baja",
+      "title": "jQuery Migrate desactualizado",
+      "recommendation": "Actualizar jQuery Migrate y considerar eliminar dependencia si no es necesaria."
+    },
+    {
+      "id": "CVE-CORR-BOOTSTRAP-OLD",
+      "technology": "bootstrap",
+      "pattern": "bootstrap[-./]([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "4.6.2",
+      "severity": "Media",
+      "title": "Bootstrap 4.x — rama legacy. Riesgo de XSS via data-attributes.",
+      "recommendation": "Actualizar a Bootstrap 5.3+ y revisar CVE-2019-8331."
+    },
+    {
+      "id": "CVE-CORR-WORDPRESS-OLD",
+      "technology": "wordpress",
+      "pattern": "wp-includes/js/wp-embed.min.js\\?ver=([0-9]+\\.[0-9]+\\.?[0-9]*)",
+      "max_inclusive": "6.3.4",
+      "severity": "Alta",
+      "title": "WordPress posiblemente desactualizado",
+      "recommendation": "Actualizar WordPress al core más reciente y verificar plugins/temas."
+    },
+    {
+      "id": "CVE-CORR-DRUPAL-OLD",
+      "technology": "drupal",
+      "pattern": "drupal\\.([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "10.1.99",
+      "severity": "Alta",
+      "title": "Drupal posiblemente desactualizado",
+      "recommendation": "Actualizar Drupal core a 10.2+ y revisar security advisories."
+    },
+    {
+      "id": "CVE-CORR-LARAVEL-DEBUG",
+      "technology": "laravel-debug",
+      "pattern": "laravel\\s+v([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "10.99.99",
+      "severity": "Crítica",
+      "title": "Laravel debug mode activo — fuga de código fuente y variables de entorno",
+      "recommendation": "Deshabilitar APP_DEBUG=false en producción inmediatamente."
+    },
+    {
+      "id": "CVE-CORR-DJANGO-DEBUG",
+      "technology": "django-debug",
+      "pattern": "django version ([0-9]+\\.[0-9]+)",
+      "max_inclusive": "99.99.99",
+      "severity": "Crítica",
+      "title": "Django debug page expuesta — fuga de stack trace y configuración",
+      "recommendation": "Establecer DEBUG=False en settings.py de producción."
+    },
+    {
+      "id": "CVE-CORR-SPRING-ACTUATOR",
+      "technology": "spring-actuator",
+      "pattern": "spring-boot/([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "3.1.99",
+      "severity": "Alta",
+      "title": "Spring Boot — verificar actuators expuestos (/actuator/env, /heapdump)",
+      "recommendation": "Securizar o deshabilitar actuators en producción. CVE-2022-22965 (Spring4Shell)."
+    },
+    {
+      "id": "CVE-CORR-TOMCAT-OLD",
+      "technology": "tomcat",
+      "pattern": "apache tomcat/?\\s*([0-9]+\\.[0-9]+\\.[0-9]+)",
+      "max_inclusive": "9.0.85",
+      "severity": "Alta",
+      "title": "Apache Tomcat posiblemente desactualizado",
+      "recommendation": "Actualizar Tomcat 9 a 9.0.86+ o Tomcat 10+ con soporte Jakarta EE 10."
+    },
+    {
+      "id": "CVE-CORR-OPENSSL-OLD",
+      "technology": "openssl",
+      "pattern": "openssl/?\\s*([0-9]+\\.[0-9]+\\.[0-9]+[a-z]?)",
+      "max_inclusive": "3.1.5",
+      "severity": "Alta",
+      "title": "OpenSSL posiblemente desactualizado",
+      "recommendation": "Actualizar OpenSSL a 3.2.x+ y revisar CVE-2023-0286, CVE-2022-0778."
+    }
+  ],
+  "header_rules": [
+    {
+      "id": "CFG-MISS-HSTS",
+      "header": "Strict-Transport-Security",
+      "severity": "Alta",
+      "title": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+      "recommendation": "Añadir: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload"
+    },
+    {
+      "id": "CFG-MISS-CSP",
+      "header": "Content-Security-Policy",
+      "severity": "Alta",
+      "title": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+      "recommendation": "Implementar CSP restrictiva: default-src 'self'; script-src 'self'; object-src 'none'"
+    },
+    {
+      "id": "CFG-MISS-XFO",
+      "header": "X-Frame-Options",
+      "severity": "Media",
+      "title": "X-Frame-Options ausente — riesgo de clickjacking",
+      "recommendation": "Añadir: X-Frame-Options: DENY (o SAMEORIGIN si se requiere iframe propio)"
+    },
+    {
+      "id": "CFG-MISS-CTO",
+      "header": "X-Content-Type-Options",
+      "severity": "Media",
+      "title": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+      "recommendation": "Añadir: X-Content-Type-Options: nosniff"
+    },
+    {
+      "id": "CFG-MISS-PP",
+      "header": "Permissions-Policy",
+      "severity": "Baja",
+      "title": "Permissions-Policy ausente — sin control de APIs del navegador",
+      "recommendation": "Añadir Permissions-Policy para restringir cámara, micrófono, geolocalización, etc."
+    },
+    {
+      "id": "CFG-MISS-RP",
+      "header": "Referrer-Policy",
+      "severity": "Baja",
+      "title": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+      "recommendation": "Añadir: Referrer-Policy: strict-origin-when-cross-origin"
+    },
+    {
+      "id": "CFG-MISS-COEP",
+      "header": "Cross-Origin-Embedder-Policy",
+      "severity": "Baja",
+      "title": "Cross-Origin-Embedder-Policy ausente",
+      "recommendation": "Evaluar: Cross-Origin-Embedder-Policy: require-corp para aislamiento de origen."
+    },
+    {
+      "id": "CFG-MISS-CORP",
+      "header": "Cross-Origin-Resource-Policy",
+      "severity": "Baja",
+      "title": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+      "recommendation": "Añadir: Cross-Origin-Resource-Policy: same-origin para recursos sensibles."
+    }
+  ],
+  "exposed_header_rules": [
+    {
+      "id": "INFO-LEAK-SERVER",
+      "header": "Server",
+      "severity": "Media",
+      "title": "Cabecera Server revela tecnología del servidor",
+      "recommendation": "Configurar ServerTokens Prod (Apache) o server_tokens off (Nginx)."
+    },
+    {
+      "id": "INFO-LEAK-XPOWEREDBY",
+      "header": "X-Powered-By",
+      "severity": "Media",
+      "title": "Cabecera X-Powered-By revela tecnología backend",
+      "recommendation": "Eliminar cabecera X-Powered-By en la configuración del servidor/framework."
+    },
+    {
+      "id": "INFO-LEAK-ASPNET",
+      "header": "X-AspNet-Version",
+      "severity": "Media",
+      "title": "Cabecera X-AspNet-Version revela versión de ASP.NET",
+      "recommendation": "Añadir <httpRuntime enableVersionHeader=\"false\" /> en web.config."
+    }
+  ]
+}

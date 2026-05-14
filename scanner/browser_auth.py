@@ -115,55 +115,94 @@ def is_auth_endpoint(url):
 
 
 def find_login_fields(page):
+    """Locate email/user and password inputs on a rendered login page.
+    
+    Tries multiple selector strategies in order of specificity, including
+    aria-label, autocomplete attributes, and common name/id patterns.
+    Falls back to the first visible text input adjacent to a password field.
+    """
+    # --- Locate password field first (most specific signal) ---
     password_locator = page.locator(
-        "input[type='password'], input[name*='pass' i], input[id*='pass' i], "
-        "input[placeholder*='contraseña' i], input[placeholder*='password' i]"
+        "input[type='password'], "
+        "input[name*='pass' i], input[id*='pass' i], "
+        "input[placeholder*='contraseña' i], input[placeholder*='password' i], "
+        "input[autocomplete='current-password'], input[autocomplete='new-password']"
     )
 
     if password_locator.count() == 0:
-        return None, None
+        # Last resort: any visible input whose aria-label hints at password
+        password_locator = page.locator(
+            "[aria-label*='password' i], [aria-label*='contraseña' i], [aria-label*='clave' i]"
+        )
+        if password_locator.count() == 0:
+            return None, None
 
     password_input = password_locator.first
 
+    # --- Locate username / email field ---
     user_locator = page.locator(
-        "input[type='email'], input[name*='email' i], input[id*='email' i], "
+        "input[type='email'], "
+        "input[name*='email' i], input[id*='email' i], "
         "input[placeholder*='email' i], input[placeholder*='correo' i], "
-        "input[name*='user' i], input[id*='user' i], input[name*='login' i], "
-        "input[type='text']"
+        "input[autocomplete='email'], input[autocomplete='username'], "
+        "input[name*='user' i], input[id*='user' i], "
+        "input[name*='login' i], input[id*='login' i], "
+        "input[name*='usuario' i], input[id*='usuario' i], "
+        "input[aria-label*='email' i], input[aria-label*='usuario' i], "
+        "input[aria-label*='user' i]"
     )
 
-    if user_locator.count() == 0:
-        return None, password_input
+    if user_locator.count() > 0:
+        return user_locator.first, password_input
 
-    return user_locator.first, password_input
+    # Fallback: first visible input[type=text] on page
+    text_inputs = page.locator("input[type='text']:visible")
+    if text_inputs.count() > 0:
+        return text_inputs.first, password_input
+
+    return None, password_input
 
 
 def click_login(page):
+    """Click the login/submit button. Tries multiple strategies."""
+    # 1. Named button patterns in ES/EN
     button_patterns = [
-        re.compile("iniciar sesión", re.I),
-        re.compile("login", re.I),
-        re.compile("sign in", re.I),
-        re.compile("acceder", re.I),
-        re.compile("entrar", re.I),
+        re.compile(r"iniciar sesión", re.I),
+        re.compile(r"inicia sesión", re.I),
+        re.compile(r"entrar", re.I),
+        re.compile(r"acceder", re.I),
+        re.compile(r"login", re.I),
+        re.compile(r"sign in", re.I),
+        re.compile(r"log in", re.I),
+        re.compile(r"submit", re.I),
+        re.compile(r"enviar", re.I),
+        re.compile(r"continuar", re.I),
     ]
 
     for pattern in button_patterns:
-        locator = page.get_by_role("button", name=pattern)
-        if locator.count() > 0:
-            locator.first.click(timeout=3000)
-            return True
+        try:
+            locator = page.get_by_role("button", name=pattern)
+            if locator.count() > 0:
+                locator.first.click(timeout=4000)
+                return True
+        except Exception:
+            continue
 
-    submit = page.locator("button[type='submit'], input[type='submit']")
-    if submit.count() > 0:
-        submit.first.click(timeout=3000)
-        return True
+    # 2. Explicit submit inputs/buttons
+    for sel in ("button[type='submit']", "input[type='submit']", "button:visible"):
+        try:
+            locator = page.locator(sel)
+            if locator.count() > 0:
+                locator.first.click(timeout=4000)
+                return True
+        except Exception:
+            continue
 
-    buttons = page.locator("button")
-    if buttons.count() > 0:
-        buttons.first.click(timeout=3000)
-        return True
-
-    page.keyboard.press("Enter")
+    # 3. Press Enter on the password field as last resort
+    try:
+        page.keyboard.press("Enter")
+    except Exception:
+        pass
     return True
 
 
