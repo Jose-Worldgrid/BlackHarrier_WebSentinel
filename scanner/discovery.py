@@ -189,7 +189,22 @@ def is_soft_404(response, baseline) -> bool:
 def classify_url(requested_url, final_url, response, baseline=None):
     requested_path = urlparse(requested_url).path.lower()
     final_path = urlparse(final_url).path.lower()
-    body = (response.text or "")[:12000].lower()
+    full_body = response.text or ""
+    body = (full_body[:15000] + "\n" + full_body[-15000:]).lower()
+    admin_requested = any(x in requested_path for x in ["admin", "administrator", "panel", "dashboard", "private", "backoffice", "manager"])
+
+    auth_gate_markers = [
+        "iniciar sesión",
+        "iniciar sesion",
+        "iniciar",
+        "sign in",
+        "login",
+        "type=\"password\"",
+        "name=\"password\"",
+        "name=\"email\"",
+        "name=\"username\"",
+    ]
+    looks_like_auth_gate = any(marker in body for marker in auth_gate_markers)
 
     if is_soft_404(response, baseline):
         return "soft_404"
@@ -205,10 +220,14 @@ def classify_url(requested_url, final_url, response, baseline=None):
             return "protected_redirect_to_auth"
         return "auth"
 
+    # Some frameworks return HTTP 200 with login HTML while staying on /admin URL.
+    if admin_requested and looks_like_auth_gate:
+        return "protected_redirect_to_auth"
+
     if any(x in final_path for x in ["registro", "register", "signup", "crear-cuenta"]):
         return "registration"
 
-    if any(x in requested_path for x in ["admin", "administrator", "panel", "dashboard", "backoffice", "manager"]):
+    if admin_requested:
         return "admin_candidate"
 
     if "/api" in requested_path or "/graphql" in requested_path or "/swagger" in requested_path or "/openapi" in requested_path:

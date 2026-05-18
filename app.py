@@ -2,6 +2,7 @@ import html
 import os
 import traceback
 import concurrent.futures
+from urllib.parse import urlparse
 from datetime import datetime
 from requests.utils import dict_from_cookiejar
 
@@ -42,6 +43,14 @@ from scanner import network_recon
 from scanner.user_enum import scan_user_enumeration
 from scanner.port_services import scan_port_services
 from scanner.vuln_correlation import scan_vulnerability_correlation
+from scanner.nmap_scanner import run_nmap_recon
+from scanner.nessus_client import NessusConfig, run_nessus_assessment
+from scanner.free_assessment import FreeAssessment
+from scanner.offensive_intel import (
+    collect_external_scan_targets,
+    build_ai_recon_contract,
+    contract_to_result,
+)
 from scanner.ai_agent import (
     enrich_pages_with_ai_context,
     record_audit_feedback,
@@ -193,8 +202,36 @@ def _collect_login_candidates(target_url, pages, manual_login_url=""):
     if not candidates:
         candidates.append(target_url)
 
-    # Preserve order while deduplicating
-    return list(dict.fromkeys(candidates))[:8]
+    # Add stable login path variants early to improve auth reliability.
+    seeds = [manual_login_url.strip()] if manual_login_url else []
+    seeds.extend(candidates)
+    for seed in seeds:
+        raw = (seed or "").strip()
+        if not raw:
+            continue
+        parsed = urlparse(raw)
+        if not parsed.scheme or not parsed.netloc:
+            continue
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        candidates.append(f"{base}/login")
+        candidates.append(f"{base}/es/login")
+
+    # Preserve order while deduplicating, but prioritize stable login paths.
+    unique = list(dict.fromkeys(candidates))
+    original_pos = {url: idx for idx, url in enumerate(unique)}
+
+    def _login_priority(url):
+        path = urlparse(str(url)).path.lower().rstrip("/")
+        if path == "/login":
+            return 0
+        if path == "/es/login":
+            return 1
+        if "login" in path or "signin" in path:
+            return 2
+        return 3
+
+    ordered = sorted(unique, key=lambda u: (_login_priority(u), original_pos[u]))
+    return ordered[:8]
 
 
 st.markdown("""
@@ -550,6 +587,135 @@ with st.sidebar:
         )
         username = st.text_input("Usuario")
         password = st.text_input("Contraseña", type="password")
+
+    mode_defaults = SCAN_MODES.get(scan_mode, {})
+
+    # Nmap – auto-detect binary; show controls only when available.
+    import shutil as _shutil
+    import os as _os
+    # shutil.which may miss Nmap if PATH was not refreshed after install.
+    # Check known Windows install locations as fallback.
+    _NMAP_FALLBACK_PATHS = [
+        r"C:\Program Files (x86)\Nmap\nmap.exe",
+        r"C:\Program Files\Nmap\nmap.exe",
+    ]
+    _nmap_bin = (
+        _shutil.which("nmap.exe")
+        or _shutil.which("nmap")
+        or next((p for p in _NMAP_FALLBACK_PATHS if _os.path.isfile(p)), None)
+    )
+    if _nmap_bin:
+        enable_nmap = st.checkbox(
+            "Activar reconocimiento Nmap",
+            value=bool(mode_defaults.get("enable_nmap", False)),
+            help=f"Binario detectado: {_nmap_bin}",
+        )
+        nmap_profile = st.selectbox(
+            "Perfil Nmap",
+            options=["SAFE", "DEEP", "AGGRESSIVE"],
+            index=["SAFE", "DEEP", "AGGRESSIVE"].index(
+                str(mode_defaults.get("nmap_profile", "SAFE"))
+            ),
+            disabled=not enable_nmap,
+            help="SAFE: detección de versiones • DEEP: + scripts NSE + OS • AGGRESSIVE: + vuln scripts",
+        )
+        if enable_nmap and nmap_profile == "AGGRESSIVE":
+            st.warning("AGGRESSIVE ejecuta scripts NSE de vulnerabilidades (más ruidoso y lento).")
+    else:
+        st.caption("Nmap no detectado. Instálalo y reinicia la herramienta para habilitarlo.")
+        enable_nmap = False
+        nmap_profile = str(mode_defaults.get("nmap_profile", "SAFE"))
+    include_udp = bool(mode_defaults.get("nmap_udp", False))
+    nmap_timeout_seconds = 420
+    nmap_scripts = ""
+
+    st.markdown("**Escaneo de vulnerabilidades (opcional)**")
+    st.caption("Nessus/Tenable desactivado temporalmente: no disponible en este entorno.")
+
+    # Choose scanning backend
+    scanning_mode = st.radio(
+        "Método de escaneo",
+        options=["Desactivado", "BlackHarrier Scanner"],
+        index=0,
+        help="BlackHarrier usa Python puro (ports, SSL, CVE público)."
+    )
+    
+    enable_nessus = False
+    use_free_scanner = scanning_mode == "BlackHarrier Scanner"
+    
+    # Safe defaults even when Nessus is not enabled.
+    nessus_mode = "nessus-local"
+    nessus_base_url = "https://localhost:8834"
+    nessus_access_key = ""
+    nessus_secret_key = ""
+    nessus_verify_ssl = False
+    nessus_poll_seconds = 180
+    nessus_template_uuid = "basic"
+
+    # Nessus configuration
+    if enable_nessus:
+        nessus_base_url = st.text_input(
+            "URL Nessus",
+            value="https://localhost:8834",
+        )
+        nessus_access_key = st.text_input(
+            "Nessus Access Key",
+            value="",
+            type="password",
+        )
+        nessus_secret_key = st.text_input(
+            "Nessus Secret Key",
+            value="",
+            type="password",
+        )
+        nessus_verify_ssl = st.checkbox(
+            "Validar SSL Nessus",
+            value=False,
+            help="En Nessus local con cert autofirmado suele ir desactivado.",
+        )
+        nessus_poll_seconds = st.slider(
+            "Tiempo máximo espera Nessus (s)",
+            min_value=60,
+            max_value=900,
+            value=int(mode_defaults.get("nessus_poll_seconds", 180)),
+            step=30,
+        )
+        nessus_template_uuid = "basic"
+
+        if not nessus_access_key.strip() or not nessus_secret_key.strip():
+            st.warning("⚠️ Nessus activado pero faltan API keys. Se omitirá.")
+    
+    # Free Scanner configuration
+    if use_free_scanner:
+        st.info("🔓 **BlackHarrier Scanner**: Escanea puertos TCP, fingerprinting de servicios, busca CVEs públicas y analiza SSL/TLS. Sin costos.")
+        free_scanner_depth = st.radio(
+            "Profundidad del escaneo",
+            options=["Rápido", "Completo"],
+            index=1,
+            help="Rápido: solo TCP. Completo: TCP+UDP+DNS."
+        )
+
+    # ── Agente IA – Exploit Suggester ────────────────────────────────────
+    st.markdown("**Agente IA – Propuesta de exploits**")
+    import shutil as _shutil2
+    _ollama_bin = _shutil2.which("ollama") or _shutil2.which("ollama.exe")
+    if _ollama_bin:
+        enable_exploit_ai = st.checkbox(
+            "Activar propuesta de exploits con IA",
+            value=True,
+            help="Usa un modelo local (Ollama) para generar PoC y análisis de exploits a partir de los CVEs encontrados.",
+        )
+        exploit_ai_model = st.selectbox(
+            "Modelo Ollama",
+            options=["llama3", "mistral", "codellama", "llama3:8b", "mistral:7b"],
+            index=0,
+            disabled=not enable_exploit_ai,
+            help="Modelo local de Ollama. Asegúrate de haberlo descargado con 'ollama pull <modelo>'.",
+        )
+    else:
+        st.caption("Ollama no detectado – el agente IA usará plantillas offline. Instala Ollama para análisis enriquecido.")
+        enable_exploit_ai = st.checkbox("Activar propuesta de exploits (modo offline)", value=True)
+        exploit_ai_model = "llama3"
 
     run_scan = st.button("Iniciar auditoría", type="primary")
 
@@ -1032,6 +1198,14 @@ def apply_false_positive_guard(all_results, pages, strict_mode=False):
             continue
 
         module_name = str(current.get("Módulo", "") or "")
+        module_name_l = module_name.lower()
+
+        # Nmap findings are deterministic network observations (ports/services).
+        # Do not apply offensive anti-FP severity downgrades to reconnaissance data.
+        if module_name_l.startswith("nmap reconnaissance"):
+            reviewed.append(current)
+            continue
+
         url = _extract_result_url(current)
         control = str(current.get("Control", "") or "").strip().lower()
 
@@ -1362,7 +1536,64 @@ def add_browser_runtime_form_if_detected(page, runtime):
         page["rendered_html"] = runtime["html"]
 
 
-def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_url, use_auth, login_url, username, password, max_auth_sqli_payloads, audit_name, strict_fp_mode):
+def _compute_discovery_active_checks(is_aggressive_mode, seed_pages_count):
+    base = 500 if is_aggressive_mode else 300
+    adaptive = base + min(max(int(seed_pages_count or 0), 0), 600)
+    return max(250, min(adaptive, 1200))
+
+
+def _compute_external_target_limit(scan_mode, hosts_count, is_aggressive_mode):
+    if int(hosts_count or 0) <= 0:
+        return 0
+    mode = str(scan_mode or "").lower()
+    if "deep" in mode or "offensive" in mode:
+        base = 10
+    elif is_aggressive_mode:
+        base = 8
+    else:
+        base = 5
+    return max(3, min(base, int(hosts_count or 0)))
+
+
+def _compute_free_scanner_target_limit(scan_mode, hosts_count, depth):
+    if int(hosts_count or 0) <= 0:
+        return 0
+    mode = str(scan_mode or "").lower()
+    depth = str(depth or "").lower()
+    base = 7 if "completo" in depth else 5
+    if "deep" in mode or "offensive" in mode:
+        base += 3
+    return max(2, min(base, int(hosts_count or 0)))
+
+
+def _scan_phase1(
+    target_url,
+    scan_mode,
+    verify_ssl,
+    use_burp_proxy,
+    burp_proxy_url,
+    use_auth,
+    login_url,
+    username,
+    password,
+    max_auth_sqli_payloads,
+    audit_name,
+    strict_fp_mode,
+    enable_nmap,
+    nmap_profile,
+    include_udp,
+    nmap_timeout_seconds,
+    nmap_scripts,
+    enable_nessus,
+    nessus_mode,
+    nessus_base_url,
+    nessus_access_key,
+    nessus_secret_key,
+    nessus_verify_ssl,
+    nessus_poll_seconds,
+    nessus_template_uuid,
+    nmap_bin: str | None = None,
+):
     """Phase 1: crawl, discovery, passive recon. Returns session state dict."""
     all_results = []
     scan_profile = SCAN_MODES.get(scan_mode, {})
@@ -1411,11 +1642,15 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
 
     with st.spinner("Discovery activo con diccionario de rutas comunes..."):
         try:
+            active_checks_budget = _compute_discovery_active_checks(
+                is_aggressive_mode=is_aggressive_mode,
+                seed_pages_count=len(crawler_pages or []),
+            )
             discovery = discover_surface(
                 target_url,
                 client=auth_client,
                 seed_pages=crawler_pages,
-                max_active_checks=500 if is_aggressive_mode else 300,
+                max_active_checks=active_checks_budget,
             )
         except Exception:
             discovery = {
@@ -1462,7 +1697,12 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         chosen_indeterminate_url = ""
 
         for candidate in login_candidates:
-            attempt_client, attempt_results = authenticate(candidate, username, password)
+            attempt_client, attempt_results = authenticate(
+                candidate,
+                username,
+                password,
+                verify_ssl=verify_ssl,
+            )
             attempt_client.verify_ssl = verify_ssl
             all_results.extend(normalize_results("Autenticación", attempt_results))
 
@@ -1487,15 +1727,24 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
             with st.spinner("Sesión establecida. Ejecutando recrawl post-login para descubrir superficie autenticada..."):
                 try:
                     post_auth_pages, _ = crawl_site(target_url, max_pages=None, client=auth_client)
+                    for page in post_auth_pages or []:
+                        page["discovery_context"] = "post_login"
+
                     merged_seed = dedupe_pages_by_url((pages or []) + (post_auth_pages or []))
                     post_auth_discovery = discover_surface(
                         target_url,
                         client=auth_client,
                         seed_pages=merged_seed,
-                        max_active_checks=500 if is_aggressive_mode else 300,
+                        max_active_checks=_compute_discovery_active_checks(
+                            is_aggressive_mode=is_aggressive_mode,
+                            seed_pages_count=len(merged_seed or []),
+                        ),
                     )
 
                     post_pages = post_auth_discovery.get("pages") or []
+                    for page in post_pages:
+                        page["discovery_context"] = "post_login"
+
                     pages = dedupe_pages_by_url(merged_seed + post_pages)
 
                     combined_discovered = list(
@@ -1507,12 +1756,43 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
                     if post_results:
                         all_results.extend(normalize_results("Discovery post-login", post_results))
 
+                    protected_hint_tokens = ["admin", "dashboard", "backoffice", "private", "restauranteadministracion"]
+                    protected_classifications = {
+                        "protected",
+                        "admin_candidate",
+                        "api_candidate",
+                        "sensitive_candidate",
+                    }
+                    post_login_surface = [
+                        page for page in pages
+                        if str(page.get("discovery_context", "")).lower() == "post_login"
+                    ]
+                    protected_post_login = [
+                        page for page in post_login_surface
+                        if str(page.get("classification", "")).lower() in protected_classifications
+                        or any(
+                            token in str(page.get("final_url") or page.get("url") or "").lower()
+                            for token in protected_hint_tokens
+                        )
+                    ]
+                    protected_samples = [
+                        str(page.get("final_url") or page.get("url") or "")
+                        for page in protected_post_login[:6]
+                    ]
+                    session_cookie_names = sorted(dict_from_cookiejar(auth_client.session.cookies).keys())
+
                     all_results.extend(normalize_results("Autenticación", [{
                         "control": "Cobertura post-login",
                         "status": "Detectado",
                         "severity": "Informativa",
                         "description": "Se amplió superficie tras autenticación para descubrir rutas protegidas.",
-                        "evidence": f"Login usado: {auth_used_login_url or 'autodetectado'} | URLs post-login: {len(post_pages)}",
+                        "evidence": (
+                            f"Login usado: {auth_used_login_url or 'autodetectado'} | "
+                            f"URLs post-login: {len(post_login_surface)} | "
+                            f"Rutas protegidas detectadas: {len(protected_post_login)} | "
+                            f"Cookies de sesión: {', '.join(session_cookie_names[:6]) if session_cookie_names else 'ninguna'} | "
+                            f"Muestras: {' | '.join(protected_samples) if protected_samples else 'sin muestras'}"
+                        ),
                         "recommendation": "Priorizar revisión de rutas administrativas descubiertas en sesión autenticada.",
                     }]))
                 except Exception:
@@ -1527,6 +1807,15 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
             auth_cookies = dict(dict_from_cookiejar(auth_client.session.cookies))
         except Exception:
             auth_cookies = {}
+    elif use_auth:
+        all_results.extend(normalize_results("Autenticación", [{
+            "control": "Autenticación",
+            "status": "No configurado",
+            "severity": "Informativa",
+            "description": "Se activó login, pero faltan usuario/contraseña para probar credenciales.",
+            "evidence": f"login_url={login_url or 'autodetect'} | username={'sí' if username else 'no'} | password={'sí' if password else 'no'}",
+            "recommendation": "Completar credenciales para habilitar descubrimiento post-login y cobertura autenticada.",
+        }]))
 
     try:
         pages = enrich_pages_with_ai_context(pages)
@@ -1569,6 +1858,187 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
     all_results.extend(run_module("Resolviendo IP/DNS y exposición de versión...", "Red e infraestructura", network_recon.scan_network_recon, target_url))
     all_results.extend(run_module("Escaneando puertos/servicios comunes...", "Puertos y servicios", scan_port_services, target_url, port_scan_profile))
     all_results.extend(run_module("Correlando exposición tecnológica (Nessus-like)...", "Correlación de vulnerabilidades", scan_vulnerability_correlation, target_url, vuln_corr_profile))
+
+    # ── Advanced external recon (Nmap + Nessus/Tenable) ─────────────────
+    external_targets = collect_external_scan_targets(
+        target_url=target_url,
+        pages=pages,
+        discovery=discovery,
+        results=all_results,
+    )
+
+    nmap_structured = {"hosts": []}
+    external_hosts = external_targets.get("hosts", [])
+    external_target_limit = _compute_external_target_limit(
+        scan_mode=scan_mode,
+        hosts_count=len(external_hosts),
+        is_aggressive_mode=is_aggressive_mode,
+    )
+
+    if not external_hosts:
+        all_results.extend(normalize_results("Correlación IA ofensiva", [{
+            "control": "Targets externos",
+            "status": "No detectado",
+            "severity": "Informativa",
+            "description": "No se detectaron hosts/IP externos adicionales para escaneo de infraestructura.",
+            "evidence": "collect_external_scan_targets devolvió lista vacía.",
+            "recommendation": "Mantener análisis web y ampliar discovery de subdominios/activos cuando corresponda.",
+        }]))
+
+    if enable_nmap and external_target_limit > 0:
+        nmap_status = st.empty()
+
+        def nmap_progress(event):
+            stage = str(event.get("stage", "nmap"))
+            host = str(event.get("host", ""))
+            port = str(event.get("port", ""))
+            service = str(event.get("service", ""))
+            version = str(event.get("version", ""))
+            nse = str(event.get("nse", ""))
+            detail = str(event.get("detail", ""))
+            nmap_status.markdown(
+                "[NMAP]  "
+                f"Host: {host or '-'} | "
+                f"Puerto: {port or '-'} | "
+                f"Servicio: {(service + ' ' + version).strip() or '-'} | "
+                f"NSE: {nse or '-'} | "
+                f"Detalle: {detail[:90] if detail else stage}"
+            )
+
+        with st.spinner("Ejecutando Nmap avanzado..."):
+            nmap_rows, nmap_structured = run_nmap_recon(
+                targets=external_hosts[:external_target_limit],
+                profile=nmap_profile,
+                               nmap_path=nmap_bin,
+                timeout_seconds=int(nmap_timeout_seconds or 420),
+                include_udp=bool(include_udp),
+                custom_scripts=str(nmap_scripts or "").strip(),
+                progress_callback=nmap_progress,
+            )
+        all_results.extend(normalize_results("Nmap reconnaissance", nmap_rows))
+
+    nessus_structured = {"scan_id": None, "vulnerabilities": []}
+    _all_cves_found: list = []  # flat CVE list for exploit suggester
+    
+    # Execute vulnerability scanning (Nessus or Free Scanner)
+    if enable_nessus and external_target_limit > 0:
+        nessus_status = st.empty()
+
+        def nessus_progress(event):
+            stage = str(event.get("stage", "nessus"))
+            scan_id = str(event.get("scan_id", ""))
+            progress = str(event.get("progress", ""))
+            detail = str(event.get("detail", ""))
+            nessus_status.markdown(
+                "[NESSUS]  "
+                f"Scan ID: {scan_id or '-'} | "
+                f"Progreso: {progress or '-'} | "
+                f"Plugin/CVE: - | CVSS: - | "
+                f"Detalle: {detail[:100] if detail else stage}"
+            )
+
+        cfg = NessusConfig(
+            mode=str(nessus_mode or "nessus-local"),
+            base_url=str(nessus_base_url or "https://localhost:8834").strip(),
+            access_key=str(nessus_access_key or "").strip(),
+            secret_key=str(nessus_secret_key or "").strip(),
+            verify_ssl=bool(nessus_verify_ssl),
+            poll_interval_seconds=6,
+            max_poll_seconds=int(nessus_poll_seconds or 180),
+            scan_name=f"{audit_name} - BH Sentinel",
+            template_uuid=str(nessus_template_uuid or "basic").strip(),
+        )
+
+        with st.spinner("Ejecutando Nessus/Tenable..."):
+            nessus_rows, nessus_structured = run_nessus_assessment(
+                targets=external_hosts[:external_target_limit],
+                cfg=cfg,
+                progress_callback=nessus_progress,
+            )
+        all_results.extend(normalize_results("Nessus/Tenable", nessus_rows))
+    
+    elif use_free_scanner:
+        free_status = st.empty()
+        
+        def free_scanner_progress(msg, progress_pct):
+            free_status.markdown(f"[BlackHarrier SCANNER] {msg} ({progress_pct}%)")
+        
+        free_assessment = FreeAssessment(timeout=5.0, max_workers=50)
+        
+        # Determine scan type based on user selection
+        port_type = "tcp" if free_scanner_depth == "Rápido" else "both"
+        
+        with st.spinner("Ejecutando escaneo de vulnerabilidades..."):
+            try:
+                # Scan external targets
+                free_target_limit = _compute_free_scanner_target_limit(
+                    scan_mode=scan_mode,
+                    hosts_count=len(external_hosts),
+                    depth=free_scanner_depth,
+                )
+                targets_to_scan = external_hosts[:free_target_limit]
+
+                if not targets_to_scan:
+                    all_results.extend(normalize_results("BlackHarrier Scanner", [{
+                        "control": "BlackHarrier Scanner",
+                        "status": "No probado",
+                        "severity": "Informativa",
+                        "description": "No hay hosts externos disponibles para escaneo de red.",
+                        "evidence": "Lista de targets vacía tras correlación de superficie.",
+                        "recommendation": "Ejecutar sobre dominios/IP explícitos o ampliar discovery de activos externos.",
+                    }]))
+
+                for target in targets_to_scan:
+                    free_status.markdown(f"[BlackHarrier SCANNER] Escaneando {target}...")
+                    
+                    assessment = free_assessment.run_full_assessment(
+                        target=target,
+                        include_dns=(free_scanner_depth == "Completo"),
+                        port_type=port_type,
+                        progress_callback=lambda msg, pct: free_scanner_progress(f"{target}: {msg}", pct)
+                    )
+                    
+                    # Convert to normalized results
+                    free_rows = assessment.get("normalized_results", [])
+                    all_results.extend(normalize_results("BlackHarrier Scanner", free_rows))
+
+                    nessus_structured["vulnerabilities"].extend(free_rows)
+
+                    # Collect flat CVE list for exploit suggester
+                    for cve_entry in assessment.get("phases", {}).get("cve_lookup") or []:
+                        svc = str(cve_entry.get("service") or "")
+                        ver = str(cve_entry.get("version") or "")
+                        for cve in (cve_entry.get("vulnerabilities", {}).get("critical") or []) + \
+                                   (cve_entry.get("vulnerabilities", {}).get("high") or []) + \
+                                   (cve_entry.get("vulnerabilities", {}).get("medium") or []) + \
+                                   (cve_entry.get("vulnerabilities", {}).get("low") or []):
+                            if isinstance(cve, dict):
+                                cve.setdefault("service", svc)
+                                cve.setdefault("version", ver)
+                                _all_cves_found.append(cve)
+                
+                free_status.markdown("✓ BlackHarrier Scanner completado")
+            
+            except Exception as e:
+                st.warning(f"⚠️ Error en BlackHarrier Scanner: {str(e)[:200]}")
+                all_results.extend(normalize_results("BlackHarrier Scanner", [{
+                    "control": "BlackHarrier Scanner",
+                    "status": "Error",
+                    "severity": "Media",
+                    "description": f"Error durante el escaneo: {str(e)[:100]}",
+                    "evidence": "",
+                    "recommendation": "Revisar configuración de red y timeouts",
+                }]))
+
+
+    # Future AI planner contract (internal only, no external AI call)
+    ai_contract = build_ai_recon_contract(
+        targets=external_targets,
+        nmap_data=nmap_structured,
+        nessus_data=nessus_structured,
+    )
+    all_results.extend(normalize_results("Correlación IA ofensiva", [contract_to_result(ai_contract)]))
+
     all_results.extend(run_module("Validando TLS/HTTPS...", "TLS/HTTPS", scan_tls, target_url))
     all_results.extend(run_module("Analizando cabeceras...", "Cabeceras de seguridad", scan_security_headers, target_url, auth_client))
     all_results.extend(run_module("Analizando cookies...", "Cookies", scan_cookies, target_url))
@@ -1603,6 +2073,7 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         "auth_status": auth_status,
         "auth_used_login_url": auth_used_login_url,
         "auth_cookies": auth_cookies,
+        "use_auth": bool(use_auth),
         "attackable_pages": attackable_pages,
         "auth_attack_pages": auth_attack_pages,
         "scan_profile": scan_profile,
@@ -1613,6 +2084,20 @@ def _scan_phase1(target_url, scan_mode, verify_ssl, use_burp_proxy, burp_proxy_u
         "scan_mode": scan_mode,
         "port_scan_profile": port_scan_profile,
         "vuln_corr_profile": vuln_corr_profile,
+        "all_cves_found": _all_cves_found,
+        "enable_nmap": bool(enable_nmap),
+        "nmap_profile": str(nmap_profile or "SAFE"),
+        "include_udp": bool(include_udp),
+        "nmap_timeout_seconds": int(nmap_timeout_seconds or 420),
+        "nmap_scripts": str(nmap_scripts or "").strip(),
+        "enable_nessus": bool(enable_nessus),
+        "nessus_mode": str(nessus_mode or "nessus-local"),
+        "nessus_base_url": str(nessus_base_url or "https://localhost:8834").strip(),
+        "nessus_verify_ssl": bool(nessus_verify_ssl),
+        "nessus_poll_seconds": int(nessus_poll_seconds or 180),
+        "nessus_template_uuid": str(nessus_template_uuid or "basic").strip(),
+        "nessus_access_key": str(nessus_access_key or "").strip(),
+        "nessus_secret_key": str(nessus_secret_key or "").strip(),
         "audit_name": audit_name,
         "target_url": target_url,
         "sqli_intensity": st.session_state.get("_sqli_intensity", "Normal - 30 payloads"),
@@ -1624,6 +2109,10 @@ def _render_phase1_summary(state):
     pages = state["pages"]
     auth_attack_pages = state["auth_attack_pages"]
     attackable_pages = state["attackable_pages"]
+    auth_status = str(state.get("auth_status", "No configurado") or "No configurado")
+    auth_used_login_url = str(state.get("auth_used_login_url", "") or "")
+    auth_cookie_names = sorted((state.get("auth_cookies") or {}).keys())
+    use_auth = bool(state.get("use_auth", False))
 
     login_pages = list(auth_attack_pages)
 
@@ -1640,6 +2129,26 @@ def _render_phase1_summary(state):
     c3.metric("Logins / auth", len(login_pages))
     c4.metric("APIs candidatas", len(api_pages))
     c5.metric("Admin / protegidas", len(admin_pages) + len(protected_pages))
+
+    if use_auth:
+        if auth_status == "Autenticado":
+            st.success(
+                "Autenticación probada: AUTENTICADO"
+                + (f" | Login usado: {auth_used_login_url}" if auth_used_login_url else "")
+                + (f" | Cookies: {', '.join(auth_cookie_names[:6])}" if auth_cookie_names else "")
+            )
+        elif auth_status == "Indeterminado":
+            st.warning(
+                "Autenticación probada: INDETERMINADO"
+                + (f" | Último login probado: {auth_used_login_url}" if auth_used_login_url else "")
+            )
+        elif auth_status == "Fallido":
+            st.error(
+                "Autenticación probada: FALLIDO"
+                + (f" | Último login probado: {auth_used_login_url}" if auth_used_login_url else "")
+            )
+        else:
+            st.info("Autenticación no ejecutada o sin credenciales completas en esta fase.")
 
     if login_pages:
         st.markdown("**Logins y rutas de autenticación detectadas:**")
@@ -1669,6 +2178,8 @@ if run_scan:
 
     st.session_state["_target_url"] = target_url
     st.session_state["_sqli_intensity"] = sqli_intensity
+    st.session_state["_enable_exploit_ai"] = enable_exploit_ai
+    st.session_state["_exploit_ai_model"] = exploit_ai_model
 
     state = _scan_phase1(
         target_url=target_url,
@@ -1683,6 +2194,20 @@ if run_scan:
         max_auth_sqli_payloads=max_auth_sqli_payloads,
         audit_name=audit_name,
         strict_fp_mode=strict_fp_mode,
+        enable_nmap=enable_nmap,
+        nmap_profile=nmap_profile,
+        include_udp=include_udp,
+        nmap_timeout_seconds=nmap_timeout_seconds,
+        nmap_scripts=nmap_scripts,
+        enable_nessus=enable_nessus,
+        nessus_mode=nessus_mode,
+        nessus_base_url=nessus_base_url,
+        nessus_access_key=nessus_access_key,
+        nessus_secret_key=nessus_secret_key,
+        nessus_verify_ssl=nessus_verify_ssl,
+        nessus_poll_seconds=nessus_poll_seconds,
+        nessus_template_uuid=nessus_template_uuid,
+        nmap_bin=_nmap_bin,
     )
 
     st.session_state["phase1_state"] = state
@@ -1957,6 +2482,78 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     all_results.extend(normalize_results("SQL Injection Auth (Browser)", auth_sqli_results))
 
     attack_finished("Ejecución ofensiva finalizada.")
+
+    # ── Agente IA – Propuesta de Exploits ───────────────────────────────────
+    _cves_for_exploits = list(state.get("all_cves_found") or [])
+    _exploit_ai_enabled = bool(st.session_state.get("_enable_exploit_ai", True))
+    _exploit_ai_model = str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3")
+
+    if _cves_for_exploits and _exploit_ai_enabled:
+        try:
+            from scanner.exploit_suggester import build_exploit_suggestions, format_suggestions_for_display
+            with st.spinner("Agente IA analizando CVEs y generando propuestas de exploits..."):
+                exploit_suggestions = build_exploit_suggestions(
+                    cves=_cves_for_exploits,
+                    target_url=target_url,
+                    ollama_model=_exploit_ai_model,
+                    use_ollama=True,
+                    max_ai_queries=5,
+                )
+            st.session_state["last_exploit_suggestions"] = exploit_suggestions
+
+            if exploit_suggestions:
+                st.markdown("---")
+                st.subheader(f"🤖 Agente IA – Propuesta de Exploits ({len(exploit_suggestions)} CVEs analizados)")
+
+                # Summary metrics
+                _crit = sum(1 for s in exploit_suggestions if s.get("severity") == "critical")
+                _high = sum(1 for s in exploit_suggestions if s.get("severity") == "high")
+                _ai_used = sum(1 for s in exploit_suggestions if s.get("ai_used"))
+                _ec1, _ec2, _ec3, _ec4 = st.columns(4)
+                _ec1.metric("CVEs analizados", len(exploit_suggestions))
+                _ec2.metric("Críticos / Altos", f"{_crit} / {_high}")
+                _ec3.metric("Enriquecidos con IA", _ai_used)
+                _ec4.metric("Modo IA", _exploit_ai_model if _ai_used else "Offline")
+
+                for sug in exploit_suggestions:
+                    _sev = sug.get("severity", "info")
+                    _sev_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(_sev, "⚪")
+                    _ai_badge = " · **[IA]**" if sug.get("ai_used") else ""
+                    _title = f"{_sev_color} **{sug['cve_id']}** (CVSS {sug['score']:.1f}) – {sug['family']}{_ai_badge}"
+                    with st.expander(_title, expanded=(_sev in ("critical", "high"))):
+                        col_l, col_r = st.columns(2)
+                        with col_l:
+                            st.markdown(f"**Servicio**: `{sug.get('service','')} {sug.get('version','')}`.strip()")
+                            st.markdown(f"**Técnica**: {sug.get('technique','')}")
+                            st.markdown(f"**Vector**: {sug.get('vector','')}")
+                            if sug.get("msf_hint"):
+                                st.code(sug["msf_hint"], language="bash")
+                        with col_r:
+                            st.markdown(f"**Remediación**: {sug.get('remediation','')}")
+                            if sug.get("description"):
+                                st.caption(sug["description"][:250])
+
+                        if sug.get("ai_analysis"):
+                            _ai = sug["ai_analysis"]
+                            if _ai.get("resumen"):
+                                st.info(f"**Análisis IA**: {_ai['resumen']}")
+                            if _ai.get("pasos_explotacion"):
+                                st.markdown("**Pasos de explotación (IA):**")
+                                for i, paso in enumerate(_ai["pasos_explotacion"], 1):
+                                    st.markdown(f"{i}. {paso}")
+                            if _ai.get("herramientas_recomendadas"):
+                                st.markdown(f"**Herramientas**: {', '.join(_ai['herramientas_recomendadas'])}")
+                            if _ai.get("nivel_dificultad"):
+                                st.markdown(f"**Dificultad de explotación**: {_ai['nivel_dificultad']}")
+
+                        if sug.get("poc"):
+                            _lang = "html" if sug["poc"].strip().startswith("<") else "python"
+                            st.markdown("**PoC / Plantilla de ataque:**")
+                            st.code(sug["poc"], language=_lang)
+        except Exception as _exp_err:
+            st.warning(f"⚠️ Error en agente de exploits: {str(_exp_err)[:200]}")
+    elif _exploit_ai_enabled and not _cves_for_exploits:
+        st.info("ℹ️ El agente IA de exploits no encontró CVEs en esta auditoría. Activa BlackHarrier Scanner para buscar vulnerabilidades en servicios de red.")
 
     all_results.extend(build_offensive_assurance_result(all_results, aggressive_mode=is_aggressive_mode))
     all_results = apply_false_positive_guard(all_results, pages, strict_mode=strict_fp_mode)

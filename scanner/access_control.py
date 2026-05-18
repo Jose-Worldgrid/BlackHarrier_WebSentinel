@@ -125,6 +125,62 @@ def _test_idor_param(client, url, param, original_value, original_response):
     return results
 
 
+def _build_path_idor_candidate_urls(url, seg_index, original_value):
+    parsed = urlparse(url)
+    segments = parsed.path.strip("/").split("/")
+    if not segments or seg_index >= len(segments):
+        return []
+
+    candidates = []
+    for mutated in _mutate_id(str(original_value or "")):
+        if mutated == str(original_value or ""):
+            continue
+        new_segments = list(segments)
+        new_segments[seg_index] = mutated
+        new_path = "/" + "/".join(new_segments)
+        candidates.append(urlunparse(parsed._replace(path=new_path)))
+    return candidates
+
+
+def _test_idor_path_segment(client, url, seg_index, original_value, original_response):
+    results = []
+    for test_url in _build_path_idor_candidate_urls(url, seg_index, original_value):
+        try:
+            r = client.get(test_url)
+            if r.status_code != 200:
+                continue
+            body = r.text or ""
+            orig_body = original_response.text or ""
+
+            if len(body) < 80:
+                continue
+
+            sim = _similarity(body, orig_body)
+            content_diff = abs(len(body) - len(orig_body))
+
+            if 0.30 < sim < 0.92 and content_diff > 100:
+                results.append({
+                    "control": f"IDOR posible en path segment [{seg_index}]",
+                    "status": "Posible hallazgo",
+                    "severity": "Alta",
+                    "description": (
+                        f"Modificar segmento de path de '{original_value}' genera respuesta distinta. "
+                        f"Posible acceso a objeto ajeno por URL directa."
+                    ),
+                    "evidence": (
+                        f"URL: {test_url} | Status: {r.status_code} | "
+                        f"Similitud con original: {sim:.2f} | Diferencia bytes: {content_diff}"
+                    ),
+                    "recommendation": (
+                        "Aplicar autorización por objeto en backend y no confiar en IDs en path sin validación de ownership."
+                    ),
+                })
+                break
+        except Exception:
+            logger.debug("Fallo en prueba IDOR por path segment", exc_info=True)
+    return results
+
+
 def mutate_numeric_params(url):
     parsed = urlparse(url)
     params = parse_qs(parsed.query)
@@ -200,7 +256,12 @@ def scan_access_control(target_url, pages, client=None):
 
         for param, original_value in id_params.items():
             if param.startswith("__path_seg_"):
-                continue  # path segment IDOR requires URL rewriting, skip for now
+                try:
+                    seg_index = int(param.replace("__path_seg_", ""))
+                except Exception:
+                    continue
+                results.extend(_test_idor_path_segment(client, page_url, seg_index, original_value, original_response))
+                continue
             idor_results = _test_idor_param(client, page_url, param, original_value, original_response)
             results.extend(idor_results)
 

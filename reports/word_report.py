@@ -120,6 +120,9 @@ MODULE_PHASE = {
     "Red e infraestructura": "Reconocimiento",
     "Puertos y servicios": "Reconocimiento",
     "Correlación de vulnerabilidades": "Reconocimiento",
+    "Nmap reconnaissance": "Reconocimiento",
+    "Nessus/Tenable": "Reconocimiento",
+    "Correlación IA ofensiva": "Reconocimiento",
     "Fingerprinting avanzado": "Reconocimiento",
     "Cabeceras de seguridad": "Reconocimiento",
     "Cookies": "Reconocimiento",
@@ -175,6 +178,20 @@ def truncate(text, limit=450):
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "..."
+
+
+def clean_evidence_for_report(text):
+    value = safe_text(text)
+    markers = [
+        "| Control anti-FP: hallazgo confirmado conservado (sin descarte automático).",
+        "| Control anti-FP: hallazgo confirmado conservado (sin descarte autom",
+        "| FP-RISK:ALTA (evidencia débil o aislada).",
+        "| FP-RISK:MEDIA (requiere corroboración adicional).",
+        "| STRICT-REVIEW:PENDIENTE (doble corroboración recomendada).",
+    ]
+    for marker in markers:
+        value = value.replace(marker, "")
+    return value.strip()
 
 
 def is_finding(item):
@@ -493,6 +510,43 @@ def sort_results(results):
             r.get("Control", ""),
         ),
     )
+
+
+def dedupe_results_for_report(results):
+    """Drop noisy duplicates while preserving strongest status/severity rows."""
+    rank_status = {
+        "Hallazgo": 5,
+        "Posible hallazgo": 4,
+        "Error": 3,
+        "Detectado": 2,
+        "Correcto": 1,
+        "No evidenciado": 1,
+        "No detectado": 1,
+    }
+    rank_sev = {
+        "Crítica": 5,
+        "Alta": 4,
+        "Media": 3,
+        "Baja": 2,
+        "Informativa": 1,
+    }
+
+    best = {}
+    for item in results or []:
+        module = safe_text(item.get("Módulo", "")).strip()
+        control = safe_text(item.get("Control", "")).strip()
+        status = safe_text(item.get("Resultado", "")).strip()
+        sev = safe_text(item.get("Severidad", "")).strip()
+        evidence = truncate(item.get("Evidencia", ""), 140).strip().lower()
+
+        key = (module, control, evidence)
+        score = (rank_status.get(status, 0), rank_sev.get(sev, 0))
+
+        current = best.get(key)
+        if not current or score > current[0]:
+            best[key] = (score, dict(item))
+
+    return [row for _, row in best.values()]
 
 
 def set_document_style(document):
@@ -820,6 +874,98 @@ def add_auth_surface_summary(document, pages):
         )
 
 
+def add_authenticated_session_evidence(document, results, pages):
+    document.add_heading("4.1 Evidencia de sesión autenticada y expansión post-login", 2)
+
+    auth_rows = [
+        row for row in results or []
+        if safe_text(row.get("Módulo")).strip() == "Autenticación"
+        or "autentic" in safe_text(row.get("Control")).lower()
+        or safe_text(row.get("Control")).strip() == "Cobertura post-login"
+    ]
+
+    if not auth_rows:
+        document.add_paragraph(
+            "No se registró evidencia estructurada de autenticación en los resultados normalizados."
+        )
+        return
+
+    status_rank = {
+        "Autenticado": 0,
+        "Detectado": 1,
+        "Indeterminado": 2,
+        "Fallido": 3,
+        "No configurado": 4,
+        "Error": 5,
+    }
+
+    def auth_row_rank(row):
+        control = safe_text(row.get("Control")).lower()
+        status = safe_text(row.get("Resultado"))
+        has_post_login = "post-login" in control or "cobertura post-login" in control
+        has_cookie_evidence = "cookies" in safe_text(row.get("Evidencia")).lower()
+        return (
+            0 if has_post_login else 1,
+            0 if has_cookie_evidence else 1,
+            status_rank.get(status, 99),
+        )
+
+    best_auth = sorted(auth_rows, key=auth_row_rank)[0]
+
+    document.add_paragraph(
+        f"Estado de autenticación observado: {safe_text(best_auth.get('Resultado'))} | "
+        f"Control: {safe_text(best_auth.get('Control'))}"
+    )
+    document.add_paragraph(
+        f"Evidencia principal: {truncate(clean_evidence_for_report(best_auth.get('Evidencia')), 320)}",
+        style="List Bullet",
+    )
+
+    post_login_pages = [
+        page for page in pages or []
+        if safe_text(page.get("discovery_context")).lower() == "post_login"
+    ]
+    protected_keywords = ["admin", "dashboard", "backoffice", "private", "restauranteadministracion"]
+    protected_pages = [
+        page for page in post_login_pages
+        if safe_text(page.get("classification")).lower() in {
+            "protected", "admin_candidate", "api_candidate", "sensitive_candidate"
+        }
+        or any(
+            token in safe_text(page.get("final_url") or page.get("url")).lower()
+            for token in protected_keywords
+        )
+    ]
+
+    document.add_paragraph(
+        f"Superficie descubierta en contexto post-login: {len(post_login_pages)} URL(s). "
+        f"Rutas potencialmente sensibles/protegidas: {len(protected_pages)}."
+    )
+
+    for page in protected_pages[:10]:
+        final_url = safe_text(page.get("final_url") or page.get("url"))
+        classification = safe_text(page.get("classification", "sin clasificar"))
+        status_code = safe_text(page.get("status_code", ""))
+        document.add_paragraph(
+            f"Ruta post-login: {truncate(final_url, 120)} | HTTP: {status_code} | Clasificación: {classification}",
+            style="List Bullet",
+        )
+
+    post_login_results = [
+        row for row in results or []
+        if safe_text(row.get("Módulo")).strip() == "Discovery post-login"
+    ]
+    if post_login_results:
+        document.add_paragraph(
+            f"Evidencias adicionales de discovery post-login registradas: {len(post_login_results)} evento(s)."
+        )
+        for row in post_login_results[:5]:
+            document.add_paragraph(
+                truncate(clean_evidence_for_report(row.get("Evidencia")), 260),
+                style="List Bullet",
+            )
+
+
 def add_top_findings_table(document, findings):
     document.add_heading("5. Hallazgos prioritarios", 1)
 
@@ -842,7 +988,7 @@ def add_top_findings_table(document, findings):
         row[0].text = sev
         row[1].text = item.get("Módulo", "")
         row[2].text = truncate(item.get("Control", ""), 90)
-        row[3].text = truncate(item.get("Evidencia", ""), 220)
+        row[3].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 220)
         row[4].text = truncate(item.get("Recomendación", ""), 220)
         style_severity_cell(row[0], sev)
 
@@ -1155,10 +1301,10 @@ def add_offensive_coverage_section(document, results):
             row[2].text = res
             # For exploited/possible: show full evidence; for protected: show concise note
             if badge in ("EXPLOTADO", "POSIBLE"):
-                row[3].text = truncate(item.get("Evidencia", ""), 280)
+                row[3].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 280)
                 row[4].text = truncate(item.get("Recomendación", ""), 200)
             else:
-                row[3].text = truncate(item.get("Evidencia", ""), 120) or "Sin evidencia de vulnerabilidad."
+                row[3].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 120) or "Sin evidencia de vulnerabilidad."
                 row[4].text = "Control efectivo. Sin acción correctiva inmediata."
             _apply_badge(row[0], badge)
 
@@ -1215,7 +1361,7 @@ def add_detailed_findings(document, findings):
         values = [
             resultado,
             truncate(item.get("Descripción", ""), 600),
-            truncate(item.get("Evidencia", ""), 800),
+            truncate(clean_evidence_for_report(item.get("Evidencia", "")), 800),
             truncate(item.get("Recomendación", ""), 600),
         ]
         for i, (label, value) in enumerate(zip(labels, values)):
@@ -1349,12 +1495,13 @@ def generate_word_report(
     section.left_margin = Inches(0.55)
     section.right_margin = Inches(0.55)
 
-    findings = [x for x in results if is_finding(x)]
-    errors = [x for x in results if is_error(x)]
-    oks = [x for x in results if is_ok(x)]
+    deduped_results = dedupe_results_for_report(results)
+    findings = [x for x in deduped_results if is_finding(x)]
+    errors = [x for x in deduped_results if is_error(x)]
+    oks = [x for x in deduped_results if is_ok(x)]
 
     # Extract concrete intelligence before building sections
-    assets = extract_sensitive_assets(results, pages)
+    assets = extract_sensitive_assets(deduped_results, pages)
 
     add_title_page(document, audit_name, target_url, scan_mode, pages_count)
 
@@ -1367,13 +1514,13 @@ def generate_word_report(
     techs_found = assets.get("technologies") or []
     creds_found = assets.get("credentials") or []
     never_run = [m for m in OFFENSIVE_MODULES if m not in {
-        item.get("Módulo") for item in results
+        item.get("Módulo") for item in deduped_results
     }]
 
     document.add_paragraph(
         f"Auditoría automatizada ejecutada sobre {target_url}. "
-        f"Se han lanzado {len(results)} pruebas distribuidas en "
-        f"{len(set(x.get('Módulo','') for x in results))} módulos."
+        f"Se han lanzado {len(deduped_results)} pruebas netas (sin duplicados) distribuidas en "
+        f"{len(set(x.get('Módulo','') for x in deduped_results))} módulos."
     )
 
     # Highlight critical findings upfront
@@ -1432,6 +1579,7 @@ def generate_word_report(
 
     # ── Section 4: Auth surface ───────────────────────────────────────
     add_auth_surface_summary(document, pages)
+    add_authenticated_session_evidence(document, deduped_results, pages)
 
     # ── Section 5: Top findings ───────────────────────────────────────
     add_top_findings_table(document, findings)
@@ -1440,22 +1588,22 @@ def generate_word_report(
     add_execution_errors_table(document, errors)
 
     # ── Section 7: Cases checked ──────────────────────────────────────
-    add_cases_checked(document, results)
+    add_cases_checked(document, deduped_results)
 
     # ── Section 8: Test traceability ──────────────────────────────────
     add_test_path_summary(document, pages, pages_count)
 
     # ── Section 9: Attack timeline ────────────────────────────────────
-    add_attack_timeline_section(document, results)
+    add_attack_timeline_section(document, deduped_results)
 
     # ── Section 10: Offensive coverage (3-state) ──────────────────────
-    add_offensive_coverage_section(document, results)
+    add_offensive_coverage_section(document, deduped_results)
 
     # ── Section 11: Detailed findings ────────────────────────────────
     add_detailed_findings(document, findings)
 
     # ── Section 12: Conclusion ────────────────────────────────────────
-    add_conclusion(document, findings, errors, results)
+    add_conclusion(document, findings, errors, deduped_results)
 
     safe_name = audit_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     file_path = f"generated_reports/{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"

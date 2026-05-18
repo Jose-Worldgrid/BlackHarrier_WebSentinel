@@ -8,6 +8,9 @@ SCAN_MODES = {
         "aggressive": False,
         "port_scan_profile": "common",
         "vuln_correlation_profile": "basic",
+        "nmap_profile": "SAFE",
+        "nmap_udp": False,
+        "nessus_poll_seconds": 90,
     },
     "Full": {
         "max_payloads": 10,
@@ -15,6 +18,9 @@ SCAN_MODES = {
         "aggressive": True,
         "port_scan_profile": "extended",
         "vuln_correlation_profile": "standard",
+        "nmap_profile": "DEEP",
+        "nmap_udp": False,
+        "nessus_poll_seconds": 180,
     },
     "Infrastructure Deep Scan": {
         "max_payloads": 15,
@@ -22,6 +28,9 @@ SCAN_MODES = {
         "aggressive": True,
         "port_scan_profile": "deep",
         "vuln_correlation_profile": "deep",
+        "nmap_profile": "AGGRESSIVE",
+        "nmap_udp": True,
+        "nessus_poll_seconds": 300,
     },
     "Safe": {
         "max_payloads": 3,
@@ -29,6 +38,9 @@ SCAN_MODES = {
         "aggressive": False,
         "port_scan_profile": "common",
         "vuln_correlation_profile": "basic",
+        "nmap_profile": "SAFE",
+        "nmap_udp": False,
+        "nessus_poll_seconds": 90,
     },
     "Deep Audit": {
         "max_payloads": 8,
@@ -36,6 +48,9 @@ SCAN_MODES = {
         "aggressive": True,
         "port_scan_profile": "extended",
         "vuln_correlation_profile": "standard",
+        "nmap_profile": "DEEP",
+        "nmap_udp": False,
+        "nessus_poll_seconds": 180,
     },
     "Offensive Authorized": {
         "max_payloads": 15,
@@ -43,5 +58,8 @@ SCAN_MODES = {
         "aggressive": True,
         "port_scan_profile": "deep",
         "vuln_correlation_profile": "deep",
+        "nmap_profile": "AGGRESSIVE",
+        "nmap_udp": True,
+        "nessus_poll_seconds": 300,
     }
 }

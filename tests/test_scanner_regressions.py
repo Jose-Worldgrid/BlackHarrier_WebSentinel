@@ -4,6 +4,8 @@ from unittest.mock import patch
 from scanner.csrf import scan_csrf_from_pages
 from scanner.dom_xss import scan_dom_xss
 from scanner.browser_auth import analyze_direct_response
+from scanner.ai_agent.executor import AdaptiveExecutor
+from scanner.forms import build_client_side_auth_result
 from scanner.sqli import analyze_boolean_difference
 from scanner.sqli import scan_sqli_pages
 from scanner.xss import scan_reflected_xss_pages
@@ -46,6 +48,47 @@ class StaticHttpClient:
 
 
 class ScannerRegressionTests(unittest.TestCase):
+    def test_adaptive_executor_403_is_blocked(self):
+        executor = AdaptiveExecutor()
+        result, reason = executor._analyze_result(403, "forbidden", {}, "' OR 1=1")
+        self.assertEqual(result, "blocked")
+        self.assertIn("Access denied", reason)
+
+    def test_adaptive_executor_429_is_partial(self):
+        executor = AdaptiveExecutor()
+        result, reason = executor._analyze_result(429, "too many requests", {}, "<script>alert(1)</script>")
+        self.assertEqual(result, "partial")
+        self.assertIn("Rate limiting", reason)
+
+    def test_forms_admin_candidate_is_not_auth_endpoint(self):
+        page = {
+            "url": "https://example.test/admin",
+            "final_url": "https://example.test/admin",
+            "classification": "admin_candidate",
+            "status_code": 200,
+            "html": "<html><body>Admin panel</body></html>",
+        }
+
+        result = build_client_side_auth_result(page)
+
+        self.assertIsNotNone(result)
+        self.assertIn("Ruta administrativa candidata detectada", result["control"])
+        self.assertNotIn("Endpoint de autenticación detectado", result["control"])
+
+    def test_forms_protected_redirect_has_dedicated_control(self):
+        page = {
+            "url": "https://example.test/admin",
+            "final_url": "https://example.test/admin",
+            "classification": "protected_redirect_to_auth",
+            "status_code": 200,
+            "html": "<html><body>Please sign in</body></html>",
+        }
+
+        result = build_client_side_auth_result(page)
+
+        self.assertIsNotNone(result)
+        self.assertIn("Ruta sensible protegida por autenticación", result["control"])
+
     def test_xss_respects_max_payloads(self):
         page = {
             "url": "https://example.test/search?q=term",

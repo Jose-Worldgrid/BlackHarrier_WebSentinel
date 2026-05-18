@@ -3,7 +3,7 @@ from urllib.parse import urljoin
 
 
 AUTH_KEYWORDS = [
-    "login", "signin", "auth", "account", "session", "admin",
+    "login", "signin", "auth", "account", "session",
     "iniciar-sesion", "inicio-sesion", "iniciar sesión", "acceder", "entrar"
 ]
 
@@ -395,7 +395,25 @@ def build_client_side_auth_result(page):
         if marker.lower() in lower:
             indicators.append(marker)
 
-    if classification == "auth" or is_auth_url(url) or is_auth_url(final_url):
+    if classification == "protected_redirect_to_auth":
+        control = f"Ruta sensible protegida por autenticación - {url}"
+        description = (
+            "Ruta sensible detectada con patrón de login gate o redirección lógica a autenticación. "
+            "No debe tratarse como formulario de login principal."
+        )
+        recommendation = (
+            "Validar control de acceso con y sin sesión, probar escalado horizontal/vertical y verificar exposición post-login."
+        )
+    elif classification == "admin_candidate":
+        control = f"Ruta administrativa candidata detectada - {url}"
+        description = (
+            "Ruta administrativa detectada sin formulario HTML clásico concluyente. "
+            "Debe tratarse como objetivo de control de acceso, no como endpoint de login."
+        )
+        recommendation = (
+            "Ejecutar pruebas de autorización (IDOR/BOLA, bypass por métodos HTTP, control por rol y acceso directo)."
+        )
+    elif classification == "auth" or is_auth_url(url) or is_auth_url(final_url):
         control = f"Endpoint de autenticación detectado - {url}"
         description = (
             "Ruta compatible con autenticación detectada. No se localizó formulario HTML clásico, "

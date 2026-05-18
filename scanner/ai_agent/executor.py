@@ -214,12 +214,12 @@ class AdaptiveExecutor:
                 return "success", "Template Injection indicators"
 
         # Partial success
-        if status in [403, 429]:
-            return "partial", "Rate limiting or access restrictions"
+        if status == 429:
+            return "partial", "Rate limiting detected during payload execution"
 
         # Blocked/Failed
         if status == 403:
-            return "failure", "Access denied - WAF/Authorization block"
+            return "blocked", "Access denied - WAF/Authorization block"
         if status == 400:
             return "failure", "Bad request - Payload syntax error or sanitization"
         if status in [404, 500]:

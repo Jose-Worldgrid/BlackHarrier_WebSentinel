@@ -163,9 +163,43 @@ def find_login_fields(page):
     return None, password_input
 
 
-def click_login(page):
-    """Click the login/submit button. Tries multiple strategies."""
-    # 1. Named button patterns in ES/EN
+def click_login(page, password_input=None):
+    """Click the login/submit button.
+
+    Priority:
+    1) submit control within the same form as password field
+    2) visible submit controls on page
+    3) named login-like buttons
+    4) Enter key in password field / page
+    """
+    # 1) Try submit inside the same form as password input
+    if password_input is not None:
+        try:
+            form_locator = password_input.locator("xpath=ancestor::form[1]")
+            if form_locator.count() > 0:
+                for sel in (
+                    "button[type='submit']:visible",
+                    "input[type='submit']:visible",
+                    "button:visible",
+                ):
+                    btn = form_locator.first.locator(sel)
+                    if btn.count() > 0:
+                        btn.first.click(timeout=4000)
+                        return True
+        except Exception:
+            pass
+
+    # 2) Explicit submit inputs/buttons on page
+    for sel in ("button[type='submit']:visible", "input[type='submit']:visible"):
+        try:
+            locator = page.locator(sel)
+            if locator.count() > 0:
+                locator.first.click(timeout=4000)
+                return True
+        except Exception:
+            continue
+
+    # 3) Named button patterns in ES/EN
     button_patterns = [
         re.compile(r"iniciar sesión", re.I),
         re.compile(r"inicia sesión", re.I),
@@ -188,8 +222,8 @@ def click_login(page):
         except Exception:
             continue
 
-    # 2. Explicit submit inputs/buttons
-    for sel in ("button[type='submit']", "input[type='submit']", "button:visible"):
+    # 4) Last visible button fallback
+    for sel in ("button:visible",):
         try:
             locator = page.locator(sel)
             if locator.count() > 0:
@@ -198,7 +232,14 @@ def click_login(page):
         except Exception:
             continue
 
-    # 3. Press Enter on the password field as last resort
+    # 5) Press Enter on password field as last resort
+    if password_input is not None:
+        try:
+            password_input.press("Enter", timeout=2000)
+            return True
+        except Exception:
+            pass
+
     try:
         page.keyboard.press("Enter")
     except Exception:
@@ -310,7 +351,7 @@ def extract_auth_runtime_evidence(login_url, timeout_ms=7000, headless=True):
             if user_input and password_input:
                 user_input.fill("blackharrier_probe@example.com", timeout=5000)
                 password_input.fill("BlackHarrierProbe123!", timeout=5000)
-                click_login(page)
+                click_login(page, password_input=password_input)
                 submitted = True
                 page.wait_for_timeout(2500)
 
@@ -602,7 +643,7 @@ def test_payload_with_browser(login_url, payload, timeout_ms=3500, headless=True
             password_input.fill(payload, timeout=5000)
 
             started = time.time()
-            click_login(page)
+            click_login(page, password_input=password_input)
 
             try:
                 page.wait_for_load_state("networkidle", timeout=timeout_ms)
@@ -755,7 +796,7 @@ def test_payload_with_browser_intercept(login_url, payload, timeout_ms=3500, hea
             password_input.fill("NotThePayload123!", timeout=5000)
 
             started = time.time()
-            click_login(page)
+            click_login(page, password_input=password_input)
 
             try:
                 page.wait_for_load_state("networkidle", timeout=timeout_ms)
