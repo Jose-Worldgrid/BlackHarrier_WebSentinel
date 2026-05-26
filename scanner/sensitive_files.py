@@ -1,6 +1,7 @@
 from urllib.parse import urljoin, urlparse
 from scanner.http_client import HttpClient
 import uuid
+import re
 
 
 SENSITIVE_PATHS = [
@@ -97,7 +98,14 @@ SIGNATURES = {
 
 
 def origin_base(url: str) -> str:
-    parsed = urlparse(url)
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    if not text.startswith(("http://", "https://")):
+        text = f"https://{text}"
+    parsed = urlparse(text)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
     return f"{parsed.scheme}://{parsed.netloc}/"
 
 
@@ -112,6 +120,20 @@ def similarity(a: str, b: str) -> float:
         return 0.0
 
     return shorter / longer if a[:300] == b[:300] else 0.0
+
+
+def looks_like_generic_error_page(body: str) -> bool:
+    lower = str(body or "").lower()
+    markers = [
+        "404",
+        "not found",
+        "this page could not be found",
+        "página no encontrada",
+        "pagina no encontrada",
+        "resource not found",
+        "error",
+    ]
+    return any(marker in lower for marker in markers)
 
 
 def get_soft_404_baseline(client, base_url):
@@ -130,16 +152,47 @@ def has_signature(path, body):
     return any(sig.upper() in upper for sig in signatures)
 
 
+def has_strong_signature(path: str, body: str, content_type: str) -> bool:
+    text = str(body or "")
+    lower = text.lower()
+    ctype = str(content_type or "").lower()
+
+    if path == ".git/HEAD":
+        return bool(re.search(r"^\s*ref:\s*refs/", text, flags=re.IGNORECASE | re.MULTILINE))
+
+    if path in {"actuator/health", "actuator/env", "openapi.json", "api-docs", "v3/api-docs"}:
+        return (
+            ("json" in ctype or text.strip().startswith("{"))
+            and any(token in lower for token in ["\"status\"", "\"paths\"", "openapi", "propertysources"])
+        )
+
+    if path in {"robots.txt", "security.txt", ".well-known/security.txt"}:
+        return any(token in lower for token in ["user-agent:", "disallow:", "contact:", "expires:"])
+
+    if path in {"sitemap.xml", "sitemap_index.xml"}:
+        return ("xml" in ctype or text.strip().startswith("<")) and any(tag in lower for tag in ["<urlset", "<sitemapindex", "<loc>"])
+
+    return has_signature(path, text)
+
+
 def scan_sensitive_files(url: str):
     client = HttpClient()
     results = []
     checked_without_exposure = []
     check_errors = []
 
-    bases = list(dict.fromkeys([
-        origin_base(url),
-        url.rstrip("/") + "/"
-    ]))
+    canonical = origin_base(url)
+    if not canonical:
+        return [{
+            "control": "Recursos sensibles (errores de comprobación)",
+            "status": "Error",
+            "severity": "Informativa",
+            "description": "URL objetivo inválida para comprobación de recursos sensibles.",
+            "evidence": f"Input recibido: {url}",
+            "recommendation": "Usar URL absoluta con host válido (ej: https://example.com).",
+        }]
+
+    bases = [canonical]
 
     for base in bases:
         try:
@@ -159,6 +212,8 @@ def scan_sensitive_files(url: str):
                     checked_without_exposure.append((path, target, response.status_code, "status_non_exposed"))
                     continue
 
+                content_type = str(response.headers.get("Content-Type", "") or "")
+
                 same_as_404 = (
                     baseline_status == response.status_code
                     and abs(body_len - baseline_len) < 50
@@ -169,7 +224,11 @@ def scan_sensitive_files(url: str):
                     checked_without_exposure.append((path, target, response.status_code, "soft_404_like"))
                     continue
 
-                if not has_signature(path, body):
+                if looks_like_generic_error_page(body) and abs(body_len - baseline_len) < 120:
+                    checked_without_exposure.append((path, target, response.status_code, "generic_error_like"))
+                    continue
+
+                if not has_strong_signature(path, body, content_type):
                     checked_without_exposure.append((path, target, response.status_code, "no_signature"))
                     continue
 

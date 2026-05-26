@@ -1,6 +1,8 @@
+import ctypes
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -10,10 +12,30 @@ from pathlib import Path
 
 
 NMAP_PROFILES = {
-    "SAFE": ["-sV", "-Pn", "-T3"],
-    "DEEP": ["-sV", "-sC", "-O", "-Pn"],
-    "AGGRESSIVE": ["-sV", "-sC", "-A", "-O", "-Pn", "--script=vuln,http-enum,http-title"],
+    # SAFE: version detection only, no ping, works without admin privileges
+    "SAFE": ["-sV", "-Pn", "-T4", "--open"],
+    # DEEP: service + default scripts, T4 speed. -O requires raw sockets (admin
+    # on Windows); injected at runtime only when the process is elevated.
+    "DEEP": ["-sV", "-sC", "-Pn", "-T4", "--open"],
+    # AGGRESSIVE: full NSE vuln scan. -A includes -O/-sV/-sC/traceroute.
+    "AGGRESSIVE": ["-sV", "-sC", "-A", "-Pn", "-T4", "--open",
+                   "--script=vuln,http-enum,http-title"],
 }
+
+
+def _is_elevated() -> bool:
+    """True when the current process has admin/root privileges."""
+    try:
+        if sys.platform == "win32":
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        pass
+    try:
+        import os as _os
+        return _os.getuid() == 0
+    except AttributeError:
+        pass
+    return False
 
 
 @dataclass
@@ -55,7 +77,12 @@ def _find_nmap_binary(preferred_path: str | None = None) -> str:
 
 def _emit(progress_callback, **kwargs):
     if progress_callback:
-        progress_callback(kwargs)
+        try:
+            progress_callback(kwargs)
+        except Exception:
+            # Streamlit UI callbacks may run from non-main threads during process readers.
+            # Never abort scan execution because of progress rendering errors.
+            return
 
 
 def _safe_kill(proc: subprocess.Popen | None):
@@ -205,11 +232,60 @@ def _parse_nmap_xml(xml_path: str, progress_callback=None) -> dict:
 
 
 def _severity_for_port(port: int) -> str:
-    if port in {23, 3389, 5900, 6379, 9200, 27017, 2375, 5985, 5986}:
+    # ── Critical: direct full-system or unauthenticated access risk ─────
+    _CRITICAL = {
+        2375, 2376,         # Docker daemon (unauthenticated API)
+        5000,               # Docker Registry (unauthenticated push/pull)
+        9000, 9001,         # Portainer / SonarQube / Jenkins
+        3389,               # RDP
+        5900, 5901,         # VNC
+        6379,               # Redis (unauthenticated)
+        9200, 9300,         # Elasticsearch
+        27017, 27018,       # MongoDB
+        5985, 5986,         # WinRM
+        2181,               # ZooKeeper
+        7001, 7002,         # WebLogic
+        1521,               # Oracle DB
+        523,                # IBM DB2
+    }
+    # ── High: sensitive/management services ─────────────────────────────
+    _HIGH = {
+        21,                 # FTP (plaintext)
+        23,                 # Telnet
+        25,                 # SMTP (relay risk)
+        110, 143,           # POP3 / IMAP (plaintext)
+        139, 445,           # SMB
+        1433,               # MSSQL
+        3306,               # MySQL/MariaDB
+        5432,               # PostgreSQL
+        8080, 8443,         # Common admin/dev HTTP
+        8000, 8001,         # Dev servers (Uvicorn/Gunicorn)
+        8888,               # Jupyter Notebook
+        9100, 9101,         # Prometheus node-exporter / JetDirect print
+        9003,               # Often API/debug port
+        1883, 8883,         # MQTT (IoT broker)
+        3000,               # Node.js / Grafana / Gitea
+        4848,               # GlassFish admin
+        4444,               # Metasploit default listener
+    }
+    # ── Medium: infrastructure services needing review ──────────────────
+    _MEDIUM = {
+        22,                 # SSH
+        53,                 # DNS
+        111, 135,           # RPC
+        389, 636,           # LDAP / LDAPS
+        587, 465,           # SMTP submission
+        993, 995,           # IMAP/POP3 SSL
+        5601,               # Kibana
+        15672,              # RabbitMQ management
+        2049,               # NFS
+        161, 162,           # SNMP
+    }
+    if port in _CRITICAL:
+        return "Crítica"
+    if port in _HIGH:
         return "Alta"
-    if port in {21, 25, 110, 139, 445, 1433, 1521, 3306, 5432, 8080, 1883, 2181, 7001, 7002}:
-        return "Alta"
-    if port in {22, 53, 111, 135, 143, 389, 636, 587, 993, 995}:
+    if port in _MEDIUM:
         return "Media"
     return "Baja"
 
@@ -314,6 +390,19 @@ def run_nmap_recon(
     profile_key = str(profile or "SAFE").upper()
     args = list(NMAP_PROFILES.get(profile_key, NMAP_PROFILES["SAFE"]))
 
+    # -O (OS detection) and -sS (SYN stealth) require raw packet privileges.
+    # Inject -O only when elevated to avoid incomplete/degraded scans.
+    elevated = _is_elevated()
+    if profile_key in ("DEEP", "AGGRESSIVE") and elevated:
+        if "-O" not in args:
+            args.append("-O")
+    elif profile_key == "AGGRESSIVE" and "-A" in args and not elevated:
+        # -A implicitly includes -O. Without admin replace with explicit safe flags.
+        args = [a for a in args if a != "-A"]
+        for flag in ("-sV", "-sC"):
+            if flag not in args:
+                args.append(flag)
+
     if include_udp and "-sU" not in args:
         args.append("-sU")
 
@@ -321,6 +410,15 @@ def run_nmap_recon(
         args.append(f"--script={custom_scripts}")
 
     nmap_bin = _find_nmap_binary(nmap_path)
+
+    # Adaptive timeout: when scanning several hosts or deeper profiles, 420s may
+    # be too low and causes premature aborts with incomplete output.
+    per_target_floor = 90
+    if profile_key == "DEEP":
+        per_target_floor = 150
+    elif profile_key == "AGGRESSIVE":
+        per_target_floor = 240
+    effective_timeout = max(int(timeout_seconds or 0), len(clean_targets) * per_target_floor)
 
     with tempfile.TemporaryDirectory(prefix="bh_nmap_") as tmpdir:
         xml_path = str(Path(tmpdir) / "nmap_scan.xml")
@@ -337,7 +435,7 @@ def run_nmap_recon(
         _emit(progress_callback, stage="nmap-start", detail=" ".join(cmd))
         rc, _stdout, stderr = _run_nmap_command(
             cmd,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=effective_timeout,
             cancel_event=cancel_event,
             progress_callback=progress_callback,
         )
@@ -353,13 +451,34 @@ def run_nmap_recon(
             }], {"hosts": []})
 
         if rc == 124:
+            if Path(xml_path).exists():
+                # Nmap usually writes partial XML; salvage data instead of discarding it.
+                try:
+                    scan_data = _parse_nmap_xml(xml_path, progress_callback=progress_callback)
+                    rows = normalize_nmap_results(scan_data, profile=profile_key)
+                    rows.append({
+                        "control": "Nmap reconnaissance (cobertura incompleta)",
+                        "status": "No probado",
+                        "severity": "Media",
+                        "description": "Timeout de Nmap alcanzado antes de finalizar. Se conserva resultado parcial sin inferir ausencia de riesgo.",
+                        "evidence": (
+                            f"Timeout efectivo: {effective_timeout}s | "
+                            f"Targets solicitados: {len(clean_targets)} | "
+                            f"Hosts parseados parcial: {len(scan_data.get('hosts', []))}"
+                        ),
+                        "recommendation": "Repetir Nmap por lotes más pequeños o con timeout mayor antes de cerrar dictamen de infraestructura.",
+                    })
+                    return rows, scan_data
+                except Exception:
+                    pass
+
             return ([{
-                "control": "Nmap reconnaissance",
-                "status": "Error",
+                "control": "Nmap reconnaissance (sin resultados por timeout)",
+                "status": "No probado",
                 "severity": "Media",
-                "description": "Timeout de Nmap alcanzado antes de finalizar.",
-                "evidence": f"Timeout: {timeout_seconds}s",
-                "recommendation": "Aumentar timeout o reducir alcance del escaneo.",
+                "description": "Timeout de Nmap alcanzado antes de finalizar. No hay datos suficientes para evaluar exposición de red.",
+                "evidence": f"Timeout efectivo: {effective_timeout}s | Targets: {len(clean_targets)}",
+                "recommendation": "Aumentar timeout o reducir alcance por ejecución. No tratar esta salida como ausencia de vulnerabilidades.",
             }], {"hosts": []})
 
         if not Path(xml_path).exists():

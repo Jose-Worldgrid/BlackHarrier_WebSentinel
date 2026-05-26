@@ -168,9 +168,21 @@ REPORTABLE_PAGE_CLASSES = {
     "error_disclosure_candidate",
 }
 
+BRIEF_MAX_FINDINGS = 12
+BRIEF_MAX_DISCOVERY_ROWS = 15
+BRIEF_MAX_AUTH_ROWS = 8
+BRIEF_MAX_ERROR_ROWS = 12
+
 
 def safe_text(value):
     return str(value if value is not None else "")
+
+
+def safe_status(value):
+    try:
+        return int(value)
+    except Exception:
+        return 0
 
 
 def truncate(text, limit=450):
@@ -512,6 +524,125 @@ def sort_results(results):
     )
 
 
+def _extract_url_hint(text: str) -> str:
+    value = safe_text(text)
+
+    tagged_patterns = [
+        r"Final:\s*(https?://[^\s|]+)",
+        r"Solicitada:\s*(https?://[^\s|]+)",
+        r"URL final:\s*(https?://[^\s|]+)",
+        r"Ruta post-login:\s*(https?://[^\s|]+)",
+    ]
+    for pattern in tagged_patterns:
+        m = re.search(pattern, value, re.I)
+        if m:
+            return m.group(1).strip().rstrip("/")
+
+    generic = re.search(r"(https?://[^\s|]+)", value, re.I)
+    if generic:
+        return generic.group(1).strip().rstrip("/")
+
+    return ""
+
+
+def _normalize_control_for_key(control: str) -> str:
+    text = safe_text(control).strip().lower()
+    text = re.sub(r"\s+", " ", text)
+
+    if text.startswith("ruta descubierta -"):
+        return "ruta_descubierta"
+    if "discovery de superficie web" in text:
+        return "discovery_superficie"
+    if "cobertura post-login" in text:
+        return "cobertura_post_login"
+
+    return text
+
+
+def _result_dedupe_key(item: dict) -> tuple:
+    if not isinstance(item, dict):
+        value = safe_text(item).strip().lower()
+        return ("raw", value, "", "")
+
+    module = safe_text(item.get("Módulo", "")).strip().lower()
+    control = _normalize_control_for_key(item.get("Control", ""))
+    status = safe_text(item.get("Resultado", "")).strip().lower()
+
+    evidence = safe_text(item.get("Evidencia", ""))
+    url_hint = _extract_url_hint(evidence)
+
+    if control == "ruta_descubierta":
+        classification = safe_text(item.get("Control", "")).split("-", 1)[-1].strip().lower()
+        return (module, control, classification, url_hint)
+
+    return (module, control, url_hint, status)
+
+
+def _is_meaningful_page_for_report(page: dict) -> bool:
+    status = safe_status(page.get("status_code"))
+    classification = safe_text(page.get("classification", "")).lower()
+    final_url = safe_text(page.get("final_url") or page.get("url"))
+
+    if not final_url:
+        return False
+    if status == 404:
+        return False
+    if classification in {"soft_404", "request_error", "html_candidate"}:
+        return False
+
+    return classification in REPORTABLE_PAGE_CLASSES or status in (401, 403) or status >= 500
+
+
+def _dedupe_pages_for_report(pages: list) -> list:
+    best = {}
+    order = []
+
+    def _page_score(page):
+        status = safe_status(page.get("status_code"))
+        classification = safe_text(page.get("classification", "")).lower()
+        score = 0
+        if 200 <= status < 400:
+            score += 4
+        elif status in (401, 403):
+            score += 3
+        elif status >= 500:
+            score += 1
+
+        if classification in {"protected", "protected_redirect_to_auth", "admin_candidate", "api_candidate", "sensitive_candidate"}:
+            score += 2
+        if safe_text(page.get("discovery_context", "")).lower() == "post_login":
+            score += 1
+        return score
+
+    for page in pages or []:
+        key = safe_text(page.get("final_url") or page.get("url")).strip().rstrip("/")
+        if not key:
+            continue
+        if key not in best:
+            best[key] = page
+            order.append(key)
+            continue
+        if _page_score(page) > _page_score(best[key]):
+            best[key] = page
+
+    return [best[key] for key in order]
+
+
+def _prioritized_findings(findings: list, limit: int = BRIEF_MAX_FINDINGS) -> list:
+    unique = {}
+    order = []
+    for item in sort_results(findings or []):
+        control = safe_text(item.get("Control", "")).strip().lower()
+        module = safe_text(item.get("Módulo", "")).strip().lower()
+        key = (module, control)
+        if key in unique:
+            continue
+        unique[key] = item
+        order.append(key)
+
+    return [unique[key] for key in order][:limit]
+
+
 def dedupe_results_for_report(results):
     """Drop noisy duplicates while preserving strongest status/severity rows."""
     rank_status = {
@@ -533,13 +664,14 @@ def dedupe_results_for_report(results):
 
     best = {}
     for item in results or []:
+        if not isinstance(item, dict):
+            continue
+
         module = safe_text(item.get("Módulo", "")).strip()
         control = safe_text(item.get("Control", "")).strip()
         status = safe_text(item.get("Resultado", "")).strip()
         sev = safe_text(item.get("Severidad", "")).strip()
-        evidence = truncate(item.get("Evidencia", ""), 140).strip().lower()
-
-        key = (module, control, evidence)
+        key = _result_dedupe_key(item)
         score = (rank_status.get(status, 0), rank_sev.get(sev, 0))
 
         current = best.get(key)
@@ -574,10 +706,7 @@ def add_sensitive_assets_section(document, assets: dict):
     document.add_heading("2. Activos y datos sensibles descubiertos", 1)
 
     document.add_paragraph(
-        "Esta sección consolida toda la inteligencia técnica concreta extraída durante el escaneo: "
-        "IPs, puertos abiertos, versiones de software, usuarios/emails, credenciales, tokens JWT, "
-        "rutas sensibles y endpoints API. Es el resumen de lo que un atacante real obtendría "
-        "de la fase de reconocimiento y explotación."
+        "Resumen consolidado de exposición técnica relevante para priorización de riesgos."
     )
 
     # ── Authentication result ─────────────────────────────────────────
@@ -598,13 +727,13 @@ def add_sensitive_assets_section(document, assets: dict):
             int(fg_h[:2], 16), int(fg_h[2:4], 16), int(fg_h[4:], 16)
         )
         run.font.bold = True
-        document.add_paragraph(f"Evidencia: {auth.get('evidence', '')}")
+        document.add_paragraph(f"Evidencia: {truncate(auth.get('evidence', ''), 220)}")
 
     # ── IPs ────────────────────────────────────────────────────────────
     ips = assets.get("ips") or []
     if ips:
         document.add_heading("IPs/Hosts descubiertos", 3)
-        document.add_paragraph(", ".join(ips))
+        document.add_paragraph(", ".join(ips[:8]))
 
     # ── Open ports ────────────────────────────────────────────────────
     ports = assets.get("ports") or []
@@ -620,7 +749,7 @@ def add_sensitive_assets_section(document, assets: dict):
         for pinfo in sorted(ports, key=lambda x: (
             {"Alta": 0, "Media": 1, "Baja": 2}.get(x.get("severity", "Baja"), 3),
             x.get("port", 0),
-        )):
+        ))[:10]:
             p_num = pinfo.get("port", 0)
             if p_num in seen_p:
                 continue
@@ -643,7 +772,7 @@ def add_sensitive_assets_section(document, assets: dict):
         for i, h in enumerate(["Tecnología", "Versión", "Origen"]):
             hdr.cells[i].text = h
         style_header_row(hdr)
-        for t in techs[:20]:
+        for t in techs[:8]:
             row = table.add_row().cells
             row[0].text = t.get("tech", "")
             row[1].text = t.get("version", "")
@@ -653,13 +782,13 @@ def add_sensitive_assets_section(document, assets: dict):
     users = assets.get("users") or []
     if users:
         document.add_heading(f"Usuarios/Emails encontrados ({len(users)})", 3)
-        document.add_paragraph(", ".join(users[:30]))
+        document.add_paragraph("Se detectaron identificadores de usuario/correo en respuestas. Revisar exposición y minimización de datos.")
 
     # ── Credentials ───────────────────────────────────────────────────
     creds = assets.get("credentials") or []
     if creds:
         document.add_heading(f"⚠ CREDENCIALES / DATOS SENSIBLES ({len(creds)} indicadores)", 3)
-        for c in creds[:10]:
+        for c in creds[:5]:
             document.add_paragraph(c, style="List Bullet")
     else:
         document.add_heading("Credenciales", 3)
@@ -676,21 +805,21 @@ def add_sensitive_assets_section(document, assets: dict):
     paths = assets.get("sensitive_paths") or []
     if paths:
         document.add_heading(f"Rutas/Endpoints sensibles ({len(paths)} detectados)", 3)
-        for p in sorted(set(paths))[:30]:
+        for p in sorted(set(paths))[:10]:
             document.add_paragraph(p, style="List Bullet")
 
     # ── API endpoints ─────────────────────────────────────────────────
     apis = assets.get("api_endpoints") or []
     if apis:
         document.add_heading(f"Endpoints API descubiertos ({len(apis)})", 3)
-        for a in apis[:10]:
+        for a in apis[:6]:
             document.add_paragraph(a, style="List Bullet")
 
     # ── Exposed server headers ────────────────────────────────────────
     hdrs = assets.get("exposed_headers") or []
     if hdrs:
         document.add_heading("Cabeceras que revelan tecnología", 3)
-        for h in hdrs[:8]:
+        for h in hdrs[:4]:
             document.add_paragraph(h, style="List Bullet")
 
     if not any([ips, ports, techs, users, creds, jwts, paths, apis, hdrs, auth]):
@@ -774,8 +903,8 @@ def add_severity_table(document, findings):
 
 def add_discovered_surface_body(document, pages):
     """Body of section 3 — discovered surface table (no section heading)."""
-    pages = pages or []
-    reportable_pages = [page for page in pages if is_reportable_page(page)]
+    pages = _dedupe_pages_for_report(pages or [])
+    reportable_pages = [page for page in pages if _is_meaningful_page_for_report(page)]
 
     if not reportable_pages:
         document.add_paragraph(
@@ -784,10 +913,7 @@ def add_discovered_surface_body(document, pages):
         )
         return
 
-    document.add_paragraph(
-        "Únicamente URLs relevantes: autenticación, registro, APIs, rutas protegidas, "
-        "candidatas admin, errores de servidor o exposiciones sensibles."
-    )
+    document.add_paragraph("Listado depurado de rutas con valor técnico para validación manual.")
 
     table = document.add_table(rows=1, cols=6)
     table.style = "Table Grid"
@@ -798,7 +924,7 @@ def add_discovered_surface_body(document, pages):
         hdr_row.cells[i].text = h
     style_header_row(hdr_row)
 
-    for page in reportable_pages[:50]:
+    for page in reportable_pages[:BRIEF_MAX_DISCOVERY_ROWS]:
         url = safe_text(page.get("url"))
         final_url = safe_text(page.get("final_url") or url)
         status_code = safe_text(page.get("status_code"))
@@ -836,7 +962,7 @@ def add_auth_surface_summary(document, pages):
     ]
 
     auth_pages = [
-        page for page in pages or []
+        page for page in _dedupe_pages_for_report(pages or [])
         if is_reportable_page(page)
         and (
             page.get("classification") in ["auth", "registration", "protected_redirect_to_auth"]
@@ -853,13 +979,9 @@ def add_auth_surface_summary(document, pages):
         )
         return
 
-    document.add_paragraph(
-        "Se identificaron rutas compatibles con autenticación o registro. Estas rutas deben considerarse objetivos "
-        "prioritarios para pruebas de validación de entrada, control de errores, rate limiting, enumeración de usuarios, "
-        "bypass lógico, SQL Injection controlada y pruebas autenticadas."
-    )
+    document.add_paragraph("Superficie de autenticación priorizada para pruebas de acceso, sesión y control de autorización.")
 
-    for page in auth_pages[:20]:
+    for page in auth_pages[:BRIEF_MAX_AUTH_ROWS]:
         url = page.get("url")
         final_url = page.get("final_url") or url
         form_summary = get_form_detection_summary(page)
@@ -921,13 +1043,17 @@ def add_authenticated_session_evidence(document, results, pages):
         style="List Bullet",
     )
 
+    deduped_pages = _dedupe_pages_for_report(pages or [])
     post_login_pages = [
-        page for page in pages or []
+        page for page in deduped_pages
         if safe_text(page.get("discovery_context")).lower() == "post_login"
+        and _is_meaningful_page_for_report(page)
     ]
+    new_post_login_pages = [page for page in post_login_pages if page.get("is_new_post_login")]
+    display_post_login = new_post_login_pages or post_login_pages
     protected_keywords = ["admin", "dashboard", "backoffice", "private", "restauranteadministracion"]
     protected_pages = [
-        page for page in post_login_pages
+        page for page in display_post_login
         if safe_text(page.get("classification")).lower() in {
             "protected", "admin_candidate", "api_candidate", "sensitive_candidate"
         }
@@ -938,11 +1064,11 @@ def add_authenticated_session_evidence(document, results, pages):
     ]
 
     document.add_paragraph(
-        f"Superficie descubierta en contexto post-login: {len(post_login_pages)} URL(s). "
+        f"Superficie descubierta en contexto post-login: {len(display_post_login)} URL(s). "
         f"Rutas potencialmente sensibles/protegidas: {len(protected_pages)}."
     )
 
-    for page in protected_pages[:10]:
+    for page in protected_pages[:BRIEF_MAX_AUTH_ROWS]:
         final_url = safe_text(page.get("final_url") or page.get("url"))
         classification = safe_text(page.get("classification", "sin clasificar"))
         status_code = safe_text(page.get("status_code", ""))
@@ -982,7 +1108,7 @@ def add_top_findings_table(document, findings):
         hdr_row.cells[i].text = h
     style_header_row(hdr_row)
 
-    for item in sort_results(findings)[:25]:
+    for item in _prioritized_findings(findings, BRIEF_MAX_FINDINGS):
         row = table.add_row().cells
         sev = item.get("Severidad", "")
         row[0].text = sev
@@ -1013,7 +1139,7 @@ def add_execution_errors_table(document, errors):
     for i, h in enumerate(headers):
         table.rows[0].cells[i].text = h
 
-    for item in errors[:30]:
+    for item in errors[:BRIEF_MAX_ERROR_ROWS]:
         row = table.add_row().cells
         row[0].text = truncate(item.get("Módulo", ""), 80)
         row[1].text = truncate(item.get("Control", ""), 100)
@@ -1386,27 +1512,52 @@ def add_discovery_dictionary_section(document, discovery):
     discovered = discovery.get("discovered", [])
     metrics = discovery.get("metrics", {})
 
+    normalized_discovered = []
+    for item in discovered or []:
+        if isinstance(item, dict):
+            normalized_discovered.append(item)
+            continue
+
+        url = safe_text(item).strip()
+        if not url:
+            continue
+        normalized_discovered.append({
+            "source": "unknown",
+            "requested_url": url,
+            "final_url": url,
+            "status_code": "",
+            "classification": "",
+            "observation": "",
+        })
+
     document.add_paragraph(
         "Se ejecutó una fase de descubrimiento activo mediante diccionario de rutas comunes. "
         "El informe omite rutas inexistentes, soft-404 y ruido operativo, manteniendo únicamente rutas con valor técnico."
     )
 
-    document.add_paragraph(f"URLs procesadas: {metrics.get('total_discovered', len(discovered))}")
+    document.add_paragraph(f"URLs procesadas: {metrics.get('total_discovered', len(normalized_discovered))}")
     document.add_paragraph(f"Rutas relevantes reportables: {metrics.get('reportable_discovered', 0)}")
-    document.add_paragraph(f"Rutas de autenticación: {metrics.get('auth_routes', 0)}")
-    document.add_paragraph(f"Rutas de registro: {metrics.get('registration_routes', 0)}")
-    document.add_paragraph(f"Rutas protegidas/redirigidas: {metrics.get('protected_routes', 0)}")
-    document.add_paragraph(f"APIs candidatas: {metrics.get('api_candidates', 0)}")
-    document.add_paragraph(f"Rutas sensibles candidatas: {metrics.get('sensitive_candidates', 0)}")
-    document.add_paragraph(f"Soft-404 omitidos del informe: {metrics.get('soft_404', 0)}")
+    document.add_paragraph(f"Rutas de autenticación/registro: {metrics.get('auth_routes', 0) + metrics.get('registration_routes', 0)}")
+    document.add_paragraph(f"Rutas protegidas/API/sensibles: {metrics.get('protected_routes', 0) + metrics.get('api_candidates', 0) + metrics.get('sensitive_candidates', 0)}")
+    document.add_paragraph(f"Soft-404 omitidos: {metrics.get('soft_404', 0)}")
 
     reportable = [
-        item for item in discovered
+        item for item in normalized_discovered
         if item.get("classification") in REPORTABLE_PAGE_CLASSES
         and str(item.get("status_code")) != "404"
     ]
 
-    if not reportable:
+    # Keep only one row per final URL to avoid repetitive dictionary noise.
+    seen_final = set()
+    compact_reportable = []
+    for item in reportable:
+        final_url = safe_text(item.get("final_url") or item.get("requested_url")).strip().rstrip("/")
+        if not final_url or final_url in seen_final:
+            continue
+        seen_final.add(final_url)
+        compact_reportable.append(item)
+
+    if not compact_reportable:
         document.add_paragraph(
             "No se identificaron rutas relevantes mediante diccionario. "
             "Las rutas inexistentes o soft-404 se han omitido del informe para reducir ruido."
@@ -1421,7 +1572,7 @@ def add_discovery_dictionary_section(document, discovery):
     for i, h in enumerate(headers):
         table.rows[0].cells[i].text = h
 
-    for item in reportable[:40]:
+    for item in compact_reportable[:12]:
         row = table.add_row().cells
         row[0].text = str(item.get("source", ""))
         row[1].text = truncate(item.get("requested_url", ""), 120)
@@ -1569,7 +1720,7 @@ def generate_word_report(
     add_summary_table(document, findings, errors, oks)
     add_severity_table(document, findings)
 
-    # ── Section 2: Sensitive assets (NEW) ────────────────────────────
+    # ── Section 2: Sensitive assets ───────────────────────────────────
     add_sensitive_assets_section(document, assets)
 
     # ── Section 3: Discovered surface ────────────────────────────────
@@ -1587,22 +1738,9 @@ def generate_word_report(
     # ── Section 6: Execution errors / limitations ────────────────────
     add_execution_errors_table(document, errors)
 
-    # ── Section 7: Cases checked ──────────────────────────────────────
-    add_cases_checked(document, deduped_results)
+    # Keep report concise and decision-oriented: omit verbose appendix-style sections.
 
-    # ── Section 8: Test traceability ──────────────────────────────────
-    add_test_path_summary(document, pages, pages_count)
-
-    # ── Section 9: Attack timeline ────────────────────────────────────
-    add_attack_timeline_section(document, deduped_results)
-
-    # ── Section 10: Offensive coverage (3-state) ──────────────────────
-    add_offensive_coverage_section(document, deduped_results)
-
-    # ── Section 11: Detailed findings ────────────────────────────────
-    add_detailed_findings(document, findings)
-
-    # ── Section 12: Conclusion ────────────────────────────────────────
+    # ── Section 7: Conclusion ─────────────────────────────────────────
     add_conclusion(document, findings, errors, deduped_results)
 
     safe_name = audit_name.replace(" ", "_").replace("/", "_").replace("\\", "_")

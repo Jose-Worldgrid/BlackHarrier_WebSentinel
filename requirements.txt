@@ -5,6 +5,8 @@ playwright>=1.59.0
 python-docx>=1.2.0
 pandas>=1.4.0
 urllib3>=1.26
+dnspython>=2.6.1
+pytest>=8.3.0
 # Optional – AI exploit suggester (local inference via Ollama REST API, no extra package needed)
 # Optional – enhanced CVE scoring
 lxml>=4.9.0

@@ -94,6 +94,19 @@ def _get_report_bytes_if_available(report_path):
         return None
 
 
+def _normalize_target_url(raw_url: str) -> str:
+    """Normalize user input to a canonical absolute HTTP(S) URL."""
+    text = str(raw_url or "").strip()
+    if not text:
+        return ""
+    if not text.startswith(("http://", "https://")):
+        text = f"https://{text}"
+    parsed = urlparse(text)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path or ''}".rstrip("/") or f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _extract_auth_runtime_evidence_safe(page_url, timeout_ms=8000, headless=True):
     """Lazy-load Playwright helper to avoid blocking app startup on heavy imports."""
     try:
@@ -1028,6 +1041,51 @@ def reprioritize_for_authenticated_session(parallel_jobs, ranked_plan, auth_stat
     return reordered_jobs, reweighted
 
 
+def estimate_defense_pressure(module_rows):
+    pressure = 0
+    markers_soft = [
+        "429",
+        "too many requests",
+        "rate limit",
+        "retry-after",
+        "slow down",
+        "throttl",
+    ]
+    markers_hard = [
+        "forbidden",
+        "access denied",
+        "waf",
+        "blocked",
+        "captcha",
+        "challenge",
+        "acceso denegado",
+        "bloque",
+    ]
+
+    for row in module_rows or []:
+        blob = " ".join([
+            str(row.get("Resultado", "") or ""),
+            str(row.get("Descripción", "") or ""),
+            str(row.get("Evidencia", "") or ""),
+        ]).lower()
+        if any(marker in blob for marker in markers_soft):
+            pressure += 1
+        if any(marker in blob for marker in markers_hard):
+            pressure += 2
+
+    return min(6, pressure)
+
+
+def adaptive_parallel_window(pressure, strict_mode=False):
+    if pressure >= 5:
+        return 1
+    if pressure >= 3:
+        return 2
+    if pressure >= 1:
+        return 3 if strict_mode else 4
+    return 5 if strict_mode else 6
+
+
 def build_offensive_assurance_result(all_results, aggressive_mode=False):
     required_modules = [
         "XSS reflejado",
@@ -1159,6 +1217,109 @@ def _evidence_strength(item):
         score -= 0.2
 
     return max(0.0, score)
+
+
+def _status_rank(value):
+    order = {
+        "hallazgo": 7,
+        "posible hallazgo": 6,
+        "detectado": 5,
+        "comprobado": 4,
+        "no evidenciado": 3,
+        "no probado": 2,
+        "error": 1,
+    }
+    return order.get(str(value or "").strip().lower(), 0)
+
+
+def _severity_rank(value):
+    order = {
+        "crítica": 5,
+        "critica": 5,
+        "alta": 4,
+        "media": 3,
+        "baja": 2,
+        "informativa": 1,
+        "info": 1,
+    }
+    return order.get(str(value or "").strip().lower(), 0)
+
+
+def _canonical_control(control):
+    text = str(control or "").strip().lower()
+    replacements = {
+        "cabecera de seguridad ausente": "cabecera_ausente",
+        "fuga de versión": "fuga_version",
+        "fuga de version": "fuga_version",
+        "tecnología desactualizada": "tecnologia_desactualizada",
+        "tecnologia desactualizada": "tecnologia_desactualizada",
+    }
+    for key, token in replacements.items():
+        if key in text:
+            return f"{token}:{text.split(':', 1)[-1].strip()}"
+    return text
+
+
+def deduplicate_results(all_results):
+    """Deduplicate repeated findings while preserving strongest evidence/severity."""
+    grouped = {}
+    order = []
+
+    for item in all_results or []:
+        current = dict(item or {})
+        canonical_control = _canonical_control(current.get("Control", ""))
+        url = _extract_result_url(current)
+        key = f"{canonical_control}||{url}"
+
+        if key not in grouped:
+            grouped[key] = current
+            order.append(key)
+            continue
+
+        existing = grouped[key]
+        existing_score = (
+            _status_rank(existing.get("Resultado")) * 10
+            + _severity_rank(existing.get("Severidad"))
+        )
+        current_score = (
+            _status_rank(current.get("Resultado")) * 10
+            + _severity_rank(current.get("Severidad"))
+        )
+
+        # Preserve the strongest row as base and enrich evidence with source module.
+        if current_score > existing_score:
+            base = current
+            extra = existing
+        else:
+            base = existing
+            extra = current
+
+        base_module = str(base.get("Módulo", "") or "")
+        extra_module = str(extra.get("Módulo", "") or "")
+        base_evidence = str(base.get("Evidencia", "") or "")
+        extra_evidence = str(extra.get("Evidencia", "") or "")
+
+        if extra_module and extra_module != base_module and extra_module not in base_evidence:
+            base["Evidencia"] = (
+                f"{base_evidence} | corroborado por módulo: {extra_module}"
+                + (f" | evidencia adicional: {extra_evidence[:180]}" if extra_evidence else "")
+            )
+
+        grouped[key] = base
+
+    deduped = [grouped[k] for k in order]
+    removed = max(0, len(all_results or []) - len(deduped))
+
+    deduped.extend(normalize_results("Control de calidad AI", [{
+        "control": "Deduplicación de hallazgos",
+        "status": "Comprobado",
+        "severity": "Informativa",
+        "description": "Se consolidaron hallazgos repetidos para reducir ruido en el informe final.",
+        "evidence": f"Entradas iniciales: {len(all_results or [])} | Entradas finales: {len(deduped)} | Duplicados consolidados: {removed}",
+        "recommendation": "Priorizar hallazgos consolidados con mayor severidad y evidencia corroborada.",
+    }]))
+
+    return deduped
 
 
 def apply_false_positive_guard(all_results, pages, strict_mode=False):
@@ -1466,15 +1627,176 @@ def is_generic_attack_page(page):
 
 
 def dedupe_pages_by_url(pages):
-    unique = []
-    seen = set()
+    best_pages = {}
+    order = []
+
     for page in pages or []:
-        key = str(page.get("final_url") or page.get("url") or "").strip().rstrip("/")
-        if not key or key in seen:
+        key = _canonical_surface_url(page.get("final_url") or page.get("url"))
+        if not key:
             continue
-        seen.add(key)
-        unique.append(page)
-    return unique
+
+        if key not in best_pages:
+            best_pages[key] = page
+            order.append(key)
+            continue
+
+        current = best_pages[key]
+        if _page_quality_score(page) > _page_quality_score(current):
+            best_pages[key] = page
+
+    return [best_pages[k] for k in order]
+
+
+def _is_noise_surface_url(url):
+    parsed = urlparse(str(url or "").strip())
+    path = (parsed.path or "").strip().lower()
+    if not path:
+        return False
+
+    if path in {"/&", "/#", "/?", "/undefined", "/null", "/none"}:
+        return True
+
+    segments = [segment for segment in path.split("/") if segment]
+    if len(segments) == 1 and all(ch in "&#?;,:" for ch in segments[0]):
+        return True
+
+    return False
+
+
+def _canonical_surface_url(raw_url):
+    url = str(raw_url or "").strip()
+    if not url:
+        return ""
+
+    if _is_noise_surface_url(url):
+        return ""
+
+    clean = url.split("#", 1)[0].strip().rstrip("/")
+    return clean
+
+
+def _safe_status_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+
+def _page_quality_score(page):
+    status = _safe_status_int(page.get("status_code"))
+    classification = str(page.get("classification", "")).lower()
+
+    score = 0
+    if 200 <= status < 400:
+        score += 6
+    elif status in (401, 403):
+        score += 5
+    elif status >= 500:
+        score += 1
+
+    if classification in {
+        "protected",
+        "protected_redirect_to_auth",
+        "admin_candidate",
+        "api_candidate",
+        "sensitive_candidate",
+        "auth",
+        "registration",
+    }:
+        score += 3
+
+    if str(page.get("discovery_context", "")).lower() == "post_login":
+        score += 1
+
+    if page.get("is_new_post_login"):
+        score += 1
+
+    return score
+
+
+def _is_meaningful_post_login_page(page):
+    url = page.get("final_url") or page.get("url") or ""
+    if not _canonical_surface_url(url):
+        return False
+
+    status = _safe_status_int(page.get("status_code"))
+    if status == 404 or status == 0:
+        return False
+
+    classification = str(page.get("classification", "")).lower()
+    if classification in {"soft_404", "request_error", "html_candidate"}:
+        return False
+
+    return True
+
+
+def _discovered_entry_url(entry):
+    if isinstance(entry, dict):
+        return str(
+            entry.get("final_url")
+            or entry.get("requested_url")
+            or entry.get("url")
+            or ""
+        ).strip().rstrip("/")
+    return str(entry or "").strip().rstrip("/")
+
+
+def _normalize_discovered_entry(entry):
+    if isinstance(entry, dict):
+        normalized = dict(entry)
+        normalized["requested_url"] = str(normalized.get("requested_url") or normalized.get("url") or "")
+        normalized["final_url"] = str(normalized.get("final_url") or normalized.get("requested_url") or normalized.get("url") or "")
+        normalized["url"] = str(normalized.get("url") or normalized.get("final_url") or normalized.get("requested_url") or "")
+        if not _canonical_surface_url(normalized.get("final_url") or normalized.get("requested_url") or normalized.get("url")):
+            return None
+        return normalized
+
+    url = _discovered_entry_url(entry)
+    url = _canonical_surface_url(url)
+    if not url:
+        return None
+
+    return {
+        "source": "unknown",
+        "requested_url": url,
+        "final_url": url,
+        "url": url,
+        "status_code": "",
+        "classification": "",
+        "observation": "",
+    }
+
+
+def merge_discovered_entries(*collections):
+    merged = []
+    seen = set()
+
+    for collection in collections:
+        for entry in collection or []:
+            normalized_entry = _normalize_discovered_entry(entry)
+            if not normalized_entry:
+                continue
+            url = _canonical_surface_url(_discovered_entry_url(entry))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            merged.append(normalized_entry)
+
+    return merged
+
+
+def discovered_entries_to_urls(entries):
+    urls = []
+    seen = set()
+
+    for entry in entries or []:
+        url = _canonical_surface_url(_discovered_entry_url(entry))
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+
+    return urls
 
 
 def add_browser_runtime_form_if_detected(page, runtime):
@@ -1612,6 +1934,7 @@ def _scan_phase1(
     auth_client = HttpClient(verify_ssl=False)
     auth_status = "No configurado"
     auth_used_login_url = ""
+    auth_final_url = ""
     auth_cookies = {}
 
     st.markdown(
@@ -1707,10 +2030,18 @@ def _scan_phase1(
             all_results.extend(normalize_results("Autenticación", attempt_results))
 
             status = str((attempt_results or [{}])[0].get("status", "")).strip()
+            attempt_final_url = str((attempt_results or [{}])[0].get("final_url", "")).strip()
+            if status:
+                auth_status = status
+                auth_used_login_url = candidate
+            if attempt_final_url:
+                auth_final_url = attempt_final_url
             if status == "Autenticado":
                 auth_client = attempt_client
                 auth_status = status
                 auth_used_login_url = candidate
+                if attempt_final_url:
+                    auth_final_url = attempt_final_url
                 break
 
             if status == "Indeterminado" and not chosen_indeterminate_client:
@@ -1726,9 +2057,93 @@ def _scan_phase1(
         if auth_status in ["Autenticado", "Indeterminado"]:
             with st.spinner("Sesión establecida. Ejecutando recrawl post-login para descubrir superficie autenticada..."):
                 try:
+                    pre_auth_surface_keys = {
+                        _canonical_surface_url(page.get("final_url") or page.get("url"))
+                        for page in (pages or [])
+                    }
+                    pre_auth_surface_keys.discard("")
+
                     post_auth_pages, _ = crawl_site(target_url, max_pages=None, client=auth_client)
                     for page in post_auth_pages or []:
                         page["discovery_context"] = "post_login"
+                        page_key = _canonical_surface_url(page.get("final_url") or page.get("url"))
+                        page["is_new_post_login"] = bool(page_key and page_key not in pre_auth_surface_keys)
+
+                    # Probe authenticated-only hint routes that crawlers miss due to JS rendering.
+                    _auth_hint_paths = [
+                        "/es/usuario", "/usuario", "/en/user", "/user",
+                        "/es/restaurantes", "/restaurantes",
+                        "/es/panel-usuario", "/panel-usuario",
+                        "/es/panel-restaurante", "/panel-restaurante",
+                        "/es/restauranteAdministracion", "/restauranteAdministracion",
+                        "/es/cuenta", "/cuenta", "/es/perfil", "/perfil",
+                        "/es/dashboard", "/dashboard",
+                        "/es/admin", "/admin",
+                        "/es/backoffice", "/backoffice",
+                        "/es/mis-restaurantes", "/mis-restaurantes",
+                    ]
+                    _parsed_origin = urlparse(target_url)
+                    _origin_base = f"{_parsed_origin.scheme}://{_parsed_origin.netloc}"
+                    _existing_post_keys = {
+                        _canonical_surface_url(p.get("final_url") or p.get("url"))
+                        for p in post_auth_pages
+                    }
+                    for _hint_path in _auth_hint_paths:
+                        _hint_url = _origin_base + _hint_path
+                        _hint_key = _canonical_surface_url(_hint_url)
+                        if _hint_key in pre_auth_surface_keys or _hint_key in _existing_post_keys:
+                            continue
+                        try:
+                            _hint_resp = auth_client.get(_hint_url)
+                            _hint_status = int(getattr(_hint_resp, "status_code", 0) or 0)
+                            _hint_final = _canonical_surface_url(str(_hint_resp.url or _hint_url))
+                            if _hint_status == 404:
+                                continue
+                            _hint_html = _hint_resp.text or ""
+                            _is_actually_new = _hint_final not in pre_auth_surface_keys
+                            post_auth_pages.append({
+                                "url": _hint_url,
+                                "final_url": str(_hint_resp.url or _hint_url),
+                                "status_code": _hint_status,
+                                "content_type": _hint_resp.headers.get("Content-Type", ""),
+                                "html": _hint_html,
+                                "forms": [],
+                                "classification": "protected" if _hint_status in (200, 301, 302, 403) else "html_candidate",
+                                "discovery_context": "post_login",
+                                "is_new_post_login": _is_actually_new,
+                            })
+                            _existing_post_keys.add(_hint_final)
+                        except Exception:
+                            pass
+
+                    if auth_final_url:
+                        landing_key = _canonical_surface_url(auth_final_url)
+                        known_post_keys = {
+                            _canonical_surface_url(page.get("final_url") or page.get("url"))
+                            for page in (post_auth_pages or [])
+                        }
+                        if landing_key and landing_key not in known_post_keys:
+                            try:
+                                landing_response = auth_client.get(auth_final_url)
+                                landing_html = landing_response.text or ""
+                                landing_content_type = landing_response.headers.get("Content-Type", "")
+                                if (
+                                    "text/html" in str(landing_content_type).lower()
+                                    or "<html" in landing_html[:5000].lower()
+                                ):
+                                    post_auth_pages.append({
+                                        "url": auth_final_url,
+                                        "final_url": str(landing_response.url or auth_final_url),
+                                        "status_code": int(getattr(landing_response, "status_code", 0) or 0),
+                                        "content_type": landing_content_type,
+                                        "html": landing_html,
+                                        "forms": [],
+                                        "classification": "protected",
+                                        "discovery_context": "post_login",
+                                        "is_new_post_login": True,
+                                    })
+                            except Exception:
+                                pass
 
                     merged_seed = dedupe_pages_by_url((pages or []) + (post_auth_pages or []))
                     post_auth_discovery = discover_surface(
@@ -1744,11 +2159,14 @@ def _scan_phase1(
                     post_pages = post_auth_discovery.get("pages") or []
                     for page in post_pages:
                         page["discovery_context"] = "post_login"
+                        page_key = _canonical_surface_url(page.get("final_url") or page.get("url"))
+                        page["is_new_post_login"] = bool(page_key and page_key not in pre_auth_surface_keys)
 
                     pages = dedupe_pages_by_url(merged_seed + post_pages)
 
-                    combined_discovered = list(
-                        dict.fromkeys((discovery.get("discovered") or []) + (post_auth_discovery.get("discovered") or []))
+                    combined_discovered = merge_discovered_entries(
+                        discovery.get("discovered") or [],
+                        post_auth_discovery.get("discovered") or [],
                     )
                     discovery["discovered"] = combined_discovered
 
@@ -1766,6 +2184,7 @@ def _scan_phase1(
                     post_login_surface = [
                         page for page in pages
                         if str(page.get("discovery_context", "")).lower() == "post_login"
+                        and _is_meaningful_post_login_page(page)
                     ]
                     protected_post_login = [
                         page for page in post_login_surface
@@ -1788,6 +2207,7 @@ def _scan_phase1(
                         "description": "Se amplió superficie tras autenticación para descubrir rutas protegidas.",
                         "evidence": (
                             f"Login usado: {auth_used_login_url or 'autodetectado'} | "
+                            f"URL final auth: {auth_final_url or 'no detectada'} | "
                             f"URLs post-login: {len(post_login_surface)} | "
                             f"Rutas protegidas detectadas: {len(protected_post_login)} | "
                             f"Cookies de sesión: {', '.join(session_cookie_names[:6]) if session_cookie_names else 'ninguna'} | "
@@ -1827,7 +2247,7 @@ def _scan_phase1(
             recommendation="Revisar dependencias del agente AI.",
         )]))
 
-    discovered_urls = discovery.get("discovered") or []
+    discovered_urls = discovered_entries_to_urls(discovery.get("discovered") or [])
 
     runtime_candidates = [
         page for page in pages
@@ -1886,24 +2306,17 @@ def _scan_phase1(
         }]))
 
     if enable_nmap and external_target_limit > 0:
+        import queue as _queue
+        _nmap_queue: _queue.SimpleQueue = _queue.SimpleQueue()
         nmap_status = st.empty()
 
         def nmap_progress(event):
-            stage = str(event.get("stage", "nmap"))
-            host = str(event.get("host", ""))
-            port = str(event.get("port", ""))
-            service = str(event.get("service", ""))
-            version = str(event.get("version", ""))
-            nse = str(event.get("nse", ""))
-            detail = str(event.get("detail", ""))
-            nmap_status.markdown(
-                "[NMAP]  "
-                f"Host: {host or '-'} | "
-                f"Puerto: {port or '-'} | "
-                f"Servicio: {(service + ' ' + version).strip() or '-'} | "
-                f"NSE: {nse or '-'} | "
-                f"Detalle: {detail[:90] if detail else stage}"
-            )
+            # Called from background reader thread — NEVER touch Streamlit UI here.
+            # Accumulate into a thread-safe queue; drained after run_nmap_recon returns.
+            try:
+                _nmap_queue.put_nowait(event)
+            except Exception:
+                pass
 
         with st.spinner("Ejecutando Nmap avanzado..."):
             nmap_rows, nmap_structured = run_nmap_recon(
@@ -1916,6 +2329,20 @@ def _scan_phase1(
                 progress_callback=nmap_progress,
             )
         all_results.extend(normalize_results("Nmap reconnaissance", nmap_rows))
+
+        # Drain progress queue and show last meaningful event in UI (safe — main thread).
+        last_event: dict | None = None
+        while not _nmap_queue.empty():
+            try:
+                last_event = _nmap_queue.get_nowait()
+            except Exception:
+                break
+        if last_event:
+            _nmap_host = str(last_event.get("host", "") or "-")
+            _nmap_detail = str(last_event.get("detail", "") or last_event.get("stage", "completado"))
+            nmap_status.markdown(
+                f"[NMAP] Completado | Último host: {_nmap_host} | Detalle: {_nmap_detail[:120]}"
+            )
 
     nessus_structured = {"scan_id": None, "vulnerabilities": []}
     _all_cves_found: list = []  # flat CVE list for exploit suggester
@@ -2046,7 +2473,7 @@ def _scan_phase1(
     all_results.extend(run_module("Analizando métodos HTTP...", "Métodos HTTP", scan_http_methods, target_url))
     all_results.extend(run_module("Buscando recursos sensibles...", "Recursos sensibles", scan_sensitive_files, target_url))
     all_results.extend(run_module("Buscando directory listing...", "Directory Listing", scan_directory_listing, target_url))
-    all_results.extend(run_module("Descubriendo APIs...", "API Discovery", scan_api_discovery, target_url, pages))
+    all_results.extend(run_module("Descubriendo APIs...", "API Discovery", scan_api_discovery, target_url, pages, auth_client))
     all_results.extend(run_module("Analizando formularios...", "Formularios", scan_forms_from_pages, pages))
     all_results.extend(run_module("Analizando CSRF...", "CSRF", scan_csrf_from_pages, pages))
     all_results.extend(run_module("Fingerprinting avanzado de tecnologías...", "Fingerprinting avanzado", scan_technology_fingerprint, target_url, pages))
@@ -2072,6 +2499,7 @@ def _scan_phase1(
         "auth_client_cfg": {"verify_ssl": verify_ssl},
         "auth_status": auth_status,
         "auth_used_login_url": auth_used_login_url,
+        "auth_final_url": auth_final_url,
         "auth_cookies": auth_cookies,
         "use_auth": bool(use_auth),
         "attackable_pages": attackable_pages,
@@ -2119,6 +2547,23 @@ def _render_phase1_summary(state):
     api_pages = [p for p in pages if p.get("classification") in ["api_candidate"]]
     admin_pages = [p for p in pages if p.get("classification") in ["admin_candidate"]]
     protected_pages = [p for p in pages if p.get("classification") in ["protected", "protected_redirect_to_auth"]]
+    post_login_pages = [
+        p for p in pages
+        if str(p.get("discovery_context", "")).lower() == "post_login"
+        and _is_meaningful_post_login_page(p)
+    ]
+    post_login_new = [p for p in post_login_pages if p.get("is_new_post_login")]
+    display_post_login = post_login_new or post_login_pages
+    post_login_protected = [
+        p for p in display_post_login
+        if str(p.get("classification", "")).lower() in {
+            "protected",
+            "protected_redirect_to_auth",
+            "admin_candidate",
+            "api_candidate",
+            "sensitive_candidate",
+        }
+    ]
 
     st.markdown("---")
     st.markdown("### Fase 1 completada — Superficie descubierta")
@@ -2170,8 +2615,99 @@ def _render_phase1_summary(state):
         for p in admin_pages[:10]:
             st.markdown(f"- `{p.get('final_url') or p.get('url', '')}`")
 
+    if use_auth:
+        st.markdown(
+            f"**Cobertura post-login:** {len(display_post_login)} URL(s) relevantes en sesión autenticada | "
+            f"Rutas protegidas/candidatas: {len(post_login_protected)}"
+        )
+        if display_post_login:
+            with st.expander("Ver URLs descubiertas post-login", expanded=False):
+                for p in display_post_login[:30]:
+                    u = p.get("final_url") or p.get("url") or ""
+                    clf = p.get("classification") or "—"
+                    st.markdown(
+                        f"- `{u}` &nbsp; <span style='color:#9ad1ff;font-size:0.85em'>{html.escape(str(clf))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                if len(display_post_login) > 30:
+                    st.caption(f"… y {len(display_post_login) - 30} más")
+
+
+def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_url, auth_final_url, auth_cookies, pages, all_results):
+    if not use_auth:
+        return
+
+    st.markdown("### Estado de autenticación y cobertura post-login")
+
+    cookie_names = sorted((auth_cookies or {}).keys())
+    status_upper = str(auth_status or "No configurado").upper()
+    login_fragment = f" | Login usado: {auth_used_login_url}" if auth_used_login_url else ""
+    final_fragment = f" | URL final auth: {auth_final_url}" if auth_final_url else ""
+    cookies_fragment = f" | Cookies: {', '.join(cookie_names[:6])}" if cookie_names else ""
+
+    if auth_status == "Autenticado":
+        st.success(f"Autenticación: {status_upper}{login_fragment}{final_fragment}{cookies_fragment}")
+    elif auth_status == "Indeterminado":
+        st.warning(f"Autenticación: {status_upper}{login_fragment}{final_fragment}{cookies_fragment}")
+    elif auth_status in ["Fallido", "Error"]:
+        st.error(f"Autenticación: {status_upper}{login_fragment}{final_fragment}")
+    else:
+        st.info(f"Autenticación: {status_upper}{login_fragment}{final_fragment}")
+
+    post_login_pages = [
+        p for p in (pages or [])
+        if str(p.get("discovery_context", "")).lower() == "post_login"
+        and _is_meaningful_post_login_page(p)
+    ]
+    post_login_new = [p for p in post_login_pages if p.get("is_new_post_login")]
+    display_post_login = post_login_new or post_login_pages
+    protected_post_login = [
+        p for p in display_post_login
+        if str(p.get("classification", "")).lower() in {
+            "protected",
+            "protected_redirect_to_auth",
+            "admin_candidate",
+            "api_candidate",
+            "sensitive_candidate",
+        }
+    ]
+
+    st.caption(
+        f"URLs post-login descubiertas: {len(display_post_login)} | "
+        f"Rutas protegidas/candidatas: {len(protected_post_login)}"
+    )
+
+    if display_post_login:
+        with st.expander("URLs descubiertas en sesión autenticada", expanded=False):
+            for page in display_post_login[:40]:
+                final_url = page.get("final_url") or page.get("url") or ""
+                classification = page.get("classification") or "—"
+                status_code = page.get("status_code") or ""
+                st.markdown(
+                    f"- `{final_url}` &nbsp; <span style='color:#a0c4ff;font-size:0.85em'>"
+                    f"HTTP {html.escape(str(status_code))} · {html.escape(str(classification))}</span>",
+                    unsafe_allow_html=True,
+                )
+            if len(display_post_login) > 40:
+                st.caption(f"… y {len(display_post_login) - 40} más")
+
+    coverage_row = next(
+        (
+            row for row in (all_results or [])
+            if str(row.get("Módulo", "")).strip() == "Autenticación"
+            and str(row.get("Control", "")).strip() == "Cobertura post-login"
+        ),
+        None,
+    )
+    if coverage_row:
+        evidence_text = str(coverage_row.get("Evidencia", "") or "")
+        if len(evidence_text) > 280:
+            evidence_text = evidence_text[:280].rstrip() + "..."
+        st.caption(f"Evidencia post-login: {evidence_text}")
+
 
 if run_scan:
+    target_url = _normalize_target_url(target_url)
     if not target_url:
         st.error("Debes introducir una URL objetivo.")
         st.stop()
@@ -2391,43 +2927,86 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         })
 
     parallel_status = st.empty()
-    parallel_status.info(f"Ejecutando {len(parallel_jobs)} módulos ofensivos en paralelo...")
+    parallel_status.info(f"Ejecutando {len(parallel_jobs)} módulos ofensivos en paralelo (modo adaptativo)...")
 
     parallel_results: dict[str, list] = {}
+    queue = list(parallel_jobs)
+    in_flight: dict = {}
+    pressure = 0
+    max_pressure = 0
+    window = adaptive_parallel_window(pressure, strict_mode=bool(strict_fp_mode))
+    done_count = 0
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-        future_map = {
-            executor.submit(_run_raw, func, *args): name
-            for name, func, args in parallel_jobs
-        }
-        done_count = 0
-        for future in concurrent.futures.as_completed(future_map):
-            name = future_map[future]
-            done_count += 1
-            try:
-                raw = future.result()
-                normalized = normalize_results(name, sanitize_module_results(raw or []))
-                if not normalized:
+        while queue and len(in_flight) < window:
+            name, func, args = queue.pop(0)
+            in_flight[executor.submit(_run_raw, func, *args)] = name
+
+        while in_flight:
+            done_set, _ = concurrent.futures.wait(
+                set(in_flight.keys()),
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+
+            for future in done_set:
+                name = in_flight.pop(future)
+                done_count += 1
+
+                try:
+                    raw = future.result()
+                    normalized = normalize_results(name, sanitize_module_results(raw or []))
+                    if not normalized:
+                        normalized = normalize_results(name, [{
+                            "control": name,
+                            "status": "No evidenciado",
+                            "severity": "Informativa",
+                            "description": "Módulo ejecutado sin observaciones en esta ejecución.",
+                            "evidence": "Sin hallazgos ni errores técnicos reportados por el módulo.",
+                            "recommendation": "Mantener monitorización y repetir en siguientes iteraciones.",
+                        }])
+                    parallel_results[name] = normalized
+                except Exception:
                     normalized = normalize_results(name, [{
                         "control": name,
-                        "status": "No evidenciado",
-                        "severity": "Informativa",
-                        "description": "Módulo ejecutado sin observaciones en esta ejecución.",
-                        "evidence": "Sin hallazgos ni errores técnicos reportados por el módulo.",
-                        "recommendation": "Mantener monitorización y repetir en siguientes iteraciones.",
+                        "status": "Error",
+                        "severity": "Media",
+                        "description": "Error inesperado en módulo paralelo.",
+                        "evidence": traceback.format_exc(),
+                        "recommendation": "Revisar trazas y dependencias del módulo.",
                     }])
-                parallel_results[name] = normalized
-            except Exception:
-                parallel_results[name] = normalize_results(name, [{
-                    "control": name,
-                    "status": "Error",
-                    "severity": "Media",
-                    "description": "Error inesperado en módulo paralelo.",
-                    "evidence": traceback.format_exc(),
-                    "recommendation": "Revisar trazas y dependencias del módulo.",
-                }])
-            parallel_status.info(f"Módulos completados: {done_count}/{len(parallel_jobs)} | Último: {name}")
+                    parallel_results[name] = normalized
 
-    parallel_status.success(f"Módulos ofensivos HTTP completados ({len(parallel_jobs)}).")
+                module_pressure = estimate_defense_pressure(parallel_results.get(name, []))
+                pressure = max(0, pressure - 1) + module_pressure
+                max_pressure = max(max_pressure, pressure)
+                window = adaptive_parallel_window(pressure, strict_mode=bool(strict_fp_mode))
+
+                while queue and len(in_flight) < window:
+                    next_name, next_func, next_args = queue.pop(0)
+                    in_flight[executor.submit(_run_raw, next_func, *next_args)] = next_name
+
+                parallel_status.info(
+                    f"Módulos completados: {done_count}/{len(parallel_jobs)} | "
+                    f"Último: {name} | presión defensiva: {pressure} | ventana: {window}"
+                )
+
+    parallel_status.success(
+        f"Módulos ofensivos HTTP completados ({len(parallel_jobs)}). "
+        f"Pico de presión defensiva observado: {max_pressure}."
+    )
+
+    all_results.extend(normalize_results("Orquestación ofensiva", [{
+        "control": "Planificador adaptativo anti-bloqueo",
+        "status": "Comprobado",
+        "severity": "Informativa",
+        "description": "La ejecución paralela ajustó dinámicamente la concurrencia ante señales de WAF/rate-limit.",
+        "evidence": (
+            f"Módulos planificados: {len(parallel_jobs)} | "
+            f"Pico presión defensiva: {max_pressure} | "
+            f"Modo estricto anti-FP: {bool(strict_fp_mode)}"
+        ),
+        "recommendation": "Mantener modo adaptativo para reducir falsos negativos por bloqueo temporal o rate limiting.",
+    }]))
 
     for name, _ , _ in parallel_jobs:
         all_results.extend(parallel_results.get(name, []))
@@ -2556,6 +3135,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         st.info("ℹ️ El agente IA de exploits no encontró CVEs en esta auditoría. Activa BlackHarrier Scanner para buscar vulnerabilidades en servicios de red.")
 
     all_results.extend(build_offensive_assurance_result(all_results, aggressive_mode=is_aggressive_mode))
+    all_results = deduplicate_results(all_results)
     all_results = apply_false_positive_guard(all_results, pages, strict_mode=strict_fp_mode)
 
     df = pd.DataFrame(all_results)
@@ -2656,6 +3236,16 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     m3.metric("Hallazgos", total_findings)
     m4.metric("Errores", total_errors)
 
+    _render_auth_post_login_summary(
+        use_auth=state.get("use_auth", False),
+        auth_status=state.get("auth_status", "No configurado"),
+        auth_used_login_url=state.get("auth_used_login_url", ""),
+        auth_final_url=state.get("auth_final_url", ""),
+        auth_cookies=state.get("auth_cookies") or {},
+        pages=pages,
+        all_results=all_results,
+    )
+
     st.dataframe(df, width="stretch")
 
     st.subheader("Resumen por severidad")
@@ -2720,7 +3310,19 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         st.session_state["last_report_path"] = report_path
         st.session_state["last_report_bytes"] = _get_report_bytes_if_available(report_path)
     except Exception:
+        report_trace = traceback.format_exc()
         st.error("No se pudo generar el informe Word. Revisa logs y dependencias de reportes.")
+        st.caption(f"Detalle técnico: {report_trace.splitlines()[-1] if report_trace else 'Error no identificado'}")
+        st.session_state["last_report_error"] = report_trace
+        try:
+            os.makedirs("logs", exist_ok=True)
+            with open("logs/report_generation.log", "a", encoding="utf-8") as log_file:
+                log_file.write(f"\n[{datetime.now().isoformat()}] Word report generation error\n")
+                log_file.write(report_trace)
+                if not report_trace.endswith("\n"):
+                    log_file.write("\n")
+        except Exception:
+            pass
         st.session_state["last_report_path"] = None
         st.session_state["last_report_bytes"] = None
 

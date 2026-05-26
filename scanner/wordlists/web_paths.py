@@ -29,5 +29,8 @@ COMMON_WEB_PATHS = [
 
     "/log", "/error", "/errors", "/phpinfo.php", "/profile",
     "/account", "/mi-cuenta", "/settings/account", "/users",
-    "/user", "/restaurants", "/restaurantes", "/products", "/productos",
+    "/user", "/usuario", "/panel-usuario", "/panel-restaurante",
+    "/restaurants", "/restaurantes", "/products", "/productos",
+    "/restauranteAdministracion", "/backoffice", "/mis-restaurantes",
+    "/perfil", "/cuenta", "/pedidos", "/orders", "/subscriptions",
 ]

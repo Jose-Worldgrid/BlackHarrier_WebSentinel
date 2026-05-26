@@ -23,6 +23,15 @@ INTERESTING_RESOURCE_EXTENSIONS = (
     ".backup", ".sql", ".env", ".config", ".yml", ".yaml"
 )
 
+NOISE_PATHS = {
+    "/&",
+    "/#",
+    "/?",
+    "/undefined",
+    "/null",
+    "/none",
+}
+
 COMMON_ENTRY_PATHS = (
     "/",
     "/es",
@@ -93,6 +102,14 @@ def is_crawlable_url(url: str) -> bool:
         return False
 
     if has_binary_extension(url):
+        return False
+
+    path = (urlparse(url).path or "").strip().lower()
+    if path in NOISE_PATHS:
+        return False
+
+    segments = [segment for segment in path.split("/") if segment]
+    if len(segments) == 1 and all(ch in "&#?;,:" for ch in segments[0]):
         return False
 
     return True

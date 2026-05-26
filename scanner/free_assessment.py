@@ -233,18 +233,21 @@ class FreeAssessment:
         fingerprint = assessment["phases"]["service_fingerprint"]
         if fingerprint:
             for port, service_info in fingerprint["services"].items():
-                if service_info["service"]:
+                service_info = service_info or {}
+                service_name = str(service_info.get("service") or "").strip()
+                if service_name:
+                    banner = str(service_info.get("banner") or "N/A")
                     results.append({
                         "module": "Service Detection",
                         "control": f"Service Version Detection",
                         "port": port,
-                        "service": service_info["service"],
+                        "service": service_name,
                         "version": service_info.get("version"),
-                        "status": f"Detected: {service_info['service']}",
+                        "status": f"Detected: {service_name}",
                         "severity": "info",
-                        "description": f"Identified {service_info['service']} service",
-                        "evidence": f"Banner: {service_info.get('banner', 'N/A')[:100]}",
-                        "recommendation": f"Verify {service_info['service']} version is up to date; apply security patches",
+                        "description": f"Identified {service_name} service",
+                        "evidence": f"Banner: {banner[:100]}",
+                        "recommendation": f"Verify {service_name} version is up to date; apply security patches",
                         "module_acronym": "SF"
                     })
         

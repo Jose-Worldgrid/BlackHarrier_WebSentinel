@@ -1,5 +1,6 @@
 from urllib.parse import urljoin, urlparse
 from difflib import SequenceMatcher
+import re
 
 from bs4 import BeautifulSoup
 
@@ -29,6 +30,20 @@ BAD_PATHS = {
     "/null",
     "/none",
 }
+
+LANG_PREFIX_RE = re.compile(r"^[a-z]{2}(?:-[a-z]{2})?$")
+
+
+def is_noise_path(path: str) -> bool:
+    value = str(path or "").strip().lower()
+    if not value:
+        return False
+    if value in BAD_PATHS:
+        return True
+    segments = [seg for seg in value.split("/") if seg]
+    if len(segments) == 1 and all(ch in "&#?;,:" for ch in segments[0]):
+        return True
+    return False
 
 
 def normalize_url(url: str) -> str:
@@ -85,7 +100,7 @@ def detect_language_prefixes(base_url: str, pages=None):
     parsed = urlparse(base_url)
     first = parsed.path.strip("/").split("/")[0] if parsed.path.strip("/") else ""
 
-    if first and len(first) <= 5:
+    if first and LANG_PREFIX_RE.match(first):
         prefixes.add(first)
 
     for page in pages or []:
@@ -93,7 +108,7 @@ def detect_language_prefixes(base_url: str, pages=None):
             parsed_page = urlparse(page.get(key) or "")
             first = parsed_page.path.strip("/").split("/")[0] if parsed_page.path.strip("/") else ""
 
-            if first and len(first) <= 5:
+            if first and LANG_PREFIX_RE.match(first):
                 prefixes.add(first)
 
     return sorted(prefixes)
@@ -114,10 +129,16 @@ def build_candidate_urls(base_url: str, pages=None):
         if not path.startswith("/"):
             path = f"/{path}"
 
+        if is_noise_path(path):
+            continue
+
         candidates.add(normalize_url(urljoin(origin, path)))
 
         for prefix in prefixes:
-            candidates.add(normalize_url(urljoin(origin, f"/{prefix}{path}")))
+            prefixed = f"/{prefix}{path}"
+            if is_noise_path(urlparse(prefixed).path):
+                continue
+            candidates.add(normalize_url(urljoin(origin, prefixed)))
 
     return sorted(candidates)
 
@@ -415,7 +436,7 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
             continue
 
         parsed_url = urlparse(url)
-        if parsed_url.path in BAD_PATHS:
+        if is_noise_path(parsed_url.path):
             continue
 
         try:

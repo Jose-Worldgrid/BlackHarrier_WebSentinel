@@ -1,72 +1,186 @@
+import re
+from collections import defaultdict
+from urllib.parse import urljoin, urlparse
+
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+
 from scanner.http_client import HttpClient
 
 
-API_HINTS = ["/api/", "/graphql", "/v1/", "/v2/", "/swagger", "/openapi", "/api-docs"]
+API_HINTS = [
+    "/api",
+    "/graphql",
+    "/v1/",
+    "/v2/",
+    "/v3/",
+    "/rest/",
+    "/swagger",
+    "/openapi",
+    "/api-docs",
+]
+
+ENDPOINT_REGEX = re.compile(
+    r"(?:https?://[^\s\"'<>]+|/[a-zA-Z0-9_\-./?=&%]+)",
+    re.IGNORECASE,
+)
 
 
-def scan_api_discovery(url: str, pages):
-    client = HttpClient()
-    results = []
-    discovered = set()
+def _looks_like_api_endpoint(value: str) -> bool:
+    lower = str(value or "").lower()
+    return any(hint in lower for hint in API_HINTS)
 
-    for page in pages:
-        page_url  = page.get("url") or page.get("final_url") or ""
-        page_html = page.get("html") or page.get("rendered_html") or ""
-        if not page_url or not page_html:
+
+def _same_host(url_a: str, url_b: str) -> bool:
+    return urlparse(str(url_a or "")).netloc == urlparse(str(url_b or "")).netloc
+
+
+def _add_endpoint(found: dict, endpoint: str, source: str):
+    normalized = str(endpoint or "").strip()
+    if not normalized:
+        return
+    found[normalized].add(source)
+
+
+def _extract_from_html(page_url: str, html: str, found: dict, js_candidates: set):
+    try:
+        soup = BeautifulSoup(html or "", "html.parser")
+    except Exception:
+        return
+
+    for tag in soup.find_all(["a", "link", "script", "iframe", "img", "source", "form"]):
+        candidates = []
+        for attr in ["href", "src", "action", "data-url", "data-endpoint", "data-api", "data-href"]:
+            value = tag.get(attr)
+            if value:
+                candidates.append(value)
+
+        for raw in candidates:
+            absolute = urljoin(page_url, raw)
+            if _looks_like_api_endpoint(absolute):
+                _add_endpoint(found, absolute, "html-link")
+
+            if absolute.lower().endswith(".js") and _same_host(page_url, absolute):
+                js_candidates.add(absolute)
+
+
+def _extract_from_text_blob(page_url: str, text: str, found: dict):
+    for match in ENDPOINT_REGEX.findall(str(text or "")):
+        candidate = urljoin(page_url, match)
+        if _looks_like_api_endpoint(candidate):
+            _add_endpoint(found, candidate, "html-js-snippet")
+
+
+def _extract_from_runtime(page: dict, found: dict):
+    runtime = page.get("browser_runtime") or {}
+
+    for endpoint in runtime.get("candidate_endpoints") or []:
+        if _looks_like_api_endpoint(endpoint):
+            _add_endpoint(found, endpoint, "runtime-candidate")
+
+    for event in runtime.get("network_events") or []:
+        endpoint = str(event.get("url") or "")
+        if _looks_like_api_endpoint(endpoint):
+            _add_endpoint(found, endpoint, "runtime-network")
+
+
+def _extract_from_pages(pages, found: dict, js_candidates: set):
+    for page in pages or []:
+        page_url = str(page.get("final_url") or page.get("url") or "")
+        if not page_url:
             continue
 
+        html_blobs = [
+            page.get("html") or "",
+            page.get("rendered_html") or "",
+            (page.get("browser_runtime") or {}).get("html") or "",
+        ]
+
+        for blob in html_blobs:
+            if not blob:
+                continue
+            _extract_from_html(page_url, blob, found, js_candidates)
+            _extract_from_text_blob(page_url, blob, found)
+
+        _extract_from_runtime(page, found)
+
+
+def _extract_from_js(client, js_urls: list, found: dict, max_js_fetch: int = 6):
+    for js_url in js_urls[:max_js_fetch]:
         try:
-            soup = BeautifulSoup(page_html, "html.parser")
+            response = client.get(js_url, timeout=8)
         except Exception:
             continue
 
-        for tag in soup.find_all(["a", "script"], href=True):
-            href = tag.get("href") or ""
-            if href:
-                full = urljoin(page_url, href)
-                if any(hint in full.lower() for hint in API_HINTS):
-                    discovered.add(full)
+        if int(getattr(response, "status_code", 0) or 0) >= 400:
+            continue
 
-        for tag in soup.find_all("script", src=True):
-            src_val = tag.get("src") or ""
-            if src_val:
-                src = urljoin(page_url, src_val)
-                if any(hint in src.lower() for hint in API_HINTS):
-                    discovered.add(src)
+        text = str(getattr(response, "text", "") or "")
+        if not text:
+            continue
 
+        for match in ENDPOINT_REGEX.findall(text):
+            absolute = urljoin(js_url, match)
+            if _looks_like_api_endpoint(absolute):
+                _add_endpoint(found, absolute, "js-static")
+
+
+def _probe_common_paths(client, url: str, found: dict):
     common_api_paths = [
         "api/",
         "api/v1/",
+        "api/v2/",
         "graphql",
         "swagger-ui.html",
         "v3/api-docs",
-        "openapi.json"
+        "openapi.json",
+        "openapi.yaml",
     ]
 
     base = url.rstrip("/") + "/"
-
     for path in common_api_paths:
         target = urljoin(base, path)
-
         try:
-            response = client.get(target)
-
-            if response.status_code in [200, 401, 403]:
-                discovered.add(f"{target} [{response.status_code}]")
-
+            response = client.get(target, timeout=8)
         except Exception:
             continue
 
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status in [200, 401, 403]:
+            _add_endpoint(found, f"{target} [{status}]", "active-probe")
+
+
+def scan_api_discovery(url: str, pages, http_client=None):
+    client = http_client or HttpClient()
+    results = []
+    discovered = defaultdict(set)
+    js_candidates = set()
+
+    _extract_from_pages(pages, discovered, js_candidates)
+    _extract_from_js(client, sorted(js_candidates), discovered)
+    _probe_common_paths(client, url, discovered)
+
     if discovered:
+        post_login_count = 0
+        for page in pages or []:
+            if str(page.get("discovery_context", "")).lower() == "post_login":
+                post_login_count += 1
+
+        evidence_items = []
+        for endpoint, sources in list(discovered.items())[:25]:
+            source_txt = ",".join(sorted(sources))
+            evidence_items.append(f"{endpoint} ({source_txt})")
+
         results.append({
             "control": "Descubrimiento de API",
             "status": "Detectado",
             "severity": "Media",
-            "description": "Se detectaron rutas o artefactos potencialmente asociados a APIs.",
-            "evidence": " | ".join(list(discovered)[:20]),
-            "recommendation": "Revisar autenticación, autorización, rate limiting y exposición de documentación API."
+            "description": "Se detectaron rutas API por HTML, runtime browser, análisis estático JS y probing activo.",
+            "evidence": (
+                f"Total endpoints: {len(discovered)} | "
+                f"Páginas post-login analizadas: {post_login_count} | "
+                + " | ".join(evidence_items)
+            ),
+            "recommendation": "Revisar autenticación, autorización por objeto (BOLA/IDOR), rate limiting y documentación API expuesta.",
         })
     else:
         results.append({
@@ -74,8 +188,8 @@ def scan_api_discovery(url: str, pages):
             "status": "No evidenciado",
             "severity": "Informativa",
             "description": "No se detectaron rutas API comunes en el alcance analizado.",
-            "evidence": "Sin rutas API identificadas.",
-            "recommendation": "Validar manualmente APIs internas o autenticadas."
+            "evidence": "Sin rutas API identificadas por HTML, runtime, JS estático ni probing activo.",
+            "recommendation": "Validar manualmente APIs internas o autenticadas y repetir tras login válido.",
         })
 
     return results
