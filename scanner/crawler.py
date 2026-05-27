@@ -81,7 +81,11 @@ def get_origin(url: str) -> str:
 
 
 def same_domain(base_url: str, candidate_url: str) -> bool:
-    return urlparse(base_url).netloc == urlparse(candidate_url).netloc
+    base = urlparse(base_url)
+    candidate = urlparse(candidate_url)
+    if base.scheme != candidate.scheme:
+        return False
+    return base.netloc == candidate.netloc
 
 
 def has_binary_extension(url: str) -> bool:
@@ -95,6 +99,17 @@ def has_interesting_resource_extension(url: str) -> bool:
 def is_valid_http_url(url: str) -> bool:
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def _same_origin(base_url: str, candidate_url: str) -> bool:
+    base = urlparse(base_url)
+    candidate = urlparse(candidate_url)
+    return (
+        base.scheme == candidate.scheme
+        and base.hostname == candidate.hostname
+        and (base.port or (443 if base.scheme == "https" else 80))
+        == (candidate.port or (443 if candidate.scheme == "https" else 80))
+    )
 
 
 def is_crawlable_url(url: str) -> bool:
@@ -240,6 +255,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
 
     base_url = normalize_url(client.normalize_url(base_url))
     origin = get_origin(base_url)
+    allowed_hostname = urlparse(base_url).hostname
 
     visited = set()
     queued = seed_common_paths(base_url)
@@ -260,7 +276,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
         if current in visited:
             continue
 
-        if not same_domain(origin, current):
+        if not _same_origin(base_url, current):
             continue
 
         if not is_crawlable_url(current):
@@ -314,7 +330,12 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
 
         final_url = normalize_url(response.url or current)
 
-        if final_url not in visited and same_domain(origin, final_url):
+        # Drop external redirects immediately; they are out of scope.
+        if not _same_origin(base_url, final_url):
+            logger.debug("Crawler skipping out-of-scope redirect: %s -> %s", current, final_url)
+            continue
+
+        if final_url not in visited and _same_origin(base_url, final_url):
             visited.add(final_url)
 
         if has_interesting_resource_extension(final_url):

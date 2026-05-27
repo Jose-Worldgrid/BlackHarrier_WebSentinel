@@ -169,9 +169,13 @@ REPORTABLE_PAGE_CLASSES = {
 }
 
 BRIEF_MAX_FINDINGS = 12
-BRIEF_MAX_DISCOVERY_ROWS = 15
-BRIEF_MAX_AUTH_ROWS = 8
-BRIEF_MAX_ERROR_ROWS = 12
+BRIEF_MAX_DISCOVERY_ROWS = 10
+BRIEF_MAX_AUTH_ROWS = 6
+BRIEF_MAX_ERROR_ROWS = 8
+
+REPORT_NOISE_MODULES = {
+    "Control de calidad AI",
+}
 
 
 def safe_text(value):
@@ -556,7 +560,40 @@ def _normalize_control_for_key(control: str) -> str:
     if "cobertura post-login" in text:
         return "cobertura_post_login"
 
+    if "content-security-policy" in text or "csp" in text:
+        return "missing_csp"
+    if "strict-transport-security" in text or "hsts" in text:
+        return "missing_hsts"
+    if "x-content-type-options" in text:
+        return "missing_x_content_type_options"
+    if "x-frame-options" in text:
+        return "missing_x_frame_options"
+    if "servicios con riesgo de exposición" in text or "puerto crítico expuesto" in text:
+        return "network_port_exposure"
+
     return text
+
+
+def _finding_cluster_key(item: dict) -> tuple:
+    module = safe_text(item.get("Módulo", "")).strip().lower()
+    control_norm = _normalize_control_for_key(item.get("Control", ""))
+
+    # Collapse duplicated header findings across modules (headers/correlation).
+    if control_norm in {
+        "missing_csp",
+        "missing_hsts",
+        "missing_x_content_type_options",
+        "missing_x_frame_options",
+    }:
+        return ("header_gap", control_norm)
+
+    # Collapse port exposure duplicates across infra modules.
+    if control_norm == "network_port_exposure" or module in {"puertos y servicios", "nmap reconnaissance"}:
+        if "puerto crítico expuesto" in safe_text(item.get("Control", "")).lower():
+            return ("network_port_exposure", safe_text(item.get("Control", "")).strip().lower())
+        return ("network_port_exposure", "general")
+
+    return (module, control_norm)
 
 
 def _result_dedupe_key(item: dict) -> tuple:
@@ -566,16 +603,48 @@ def _result_dedupe_key(item: dict) -> tuple:
 
     module = safe_text(item.get("Módulo", "")).strip().lower()
     control = _normalize_control_for_key(item.get("Control", ""))
-    status = safe_text(item.get("Resultado", "")).strip().lower()
-
     evidence = safe_text(item.get("Evidencia", ""))
     url_hint = _extract_url_hint(evidence)
 
     if control == "ruta_descubierta":
-        classification = safe_text(item.get("Control", "")).split("-", 1)[-1].strip().lower()
-        return (module, control, classification, url_hint)
+        return (control, url_hint)
 
-    return (module, control, url_hint, status)
+    return (module, control, url_hint)
+
+
+def _extract_int_metric(evidence: str, label: str) -> int:
+    m = re.search(rf"{re.escape(label)}\s*:\s*(\d+)", safe_text(evidence), re.I)
+    if not m:
+        return 0
+    try:
+        return int(m.group(1))
+    except Exception:
+        return 0
+
+
+def _is_low_value_repeated_row(item: dict) -> bool:
+    module = safe_text(item.get("Módulo", "")).strip()
+    control = safe_text(item.get("Control", "")).strip().lower()
+    status = safe_text(item.get("Resultado", "")).strip()
+    evidence = safe_text(item.get("Evidencia", ""))
+
+    if module in REPORT_NOISE_MODULES:
+        return True
+
+    # Ignore repetitive post-login summaries when there was no net change.
+    if module == "Autenticación" and "cobertura post-login" in control and status == "Detectado":
+        post_urls = _extract_int_metric(evidence, "URLs post-login")
+        protected = _extract_int_metric(evidence, "Rutas protegidas detectadas")
+        if post_urls <= 0 and protected <= 0:
+            return True
+
+    # Remove discovery noise from known irrelevant responses.
+    if module in {"Discovery", "Discovery post-login"}:
+        blob = f"{control} {evidence}".lower()
+        if any(tok in blob for tok in ["404", "soft_404", "html_candidate", "request_error"]):
+            return True
+
+    return False
 
 
 def _is_meaningful_page_for_report(page: dict) -> bool:
@@ -632,13 +701,23 @@ def _prioritized_findings(findings: list, limit: int = BRIEF_MAX_FINDINGS) -> li
     unique = {}
     order = []
     for item in sort_results(findings or []):
-        control = safe_text(item.get("Control", "")).strip().lower()
-        module = safe_text(item.get("Módulo", "")).strip().lower()
-        key = (module, control)
-        if key in unique:
+        key = _finding_cluster_key(item)
+        current = unique.get(key)
+        if not current:
+            unique[key] = item
+            order.append(key)
             continue
-        unique[key] = item
-        order.append(key)
+
+        cur_rank = (
+            SEVERITY_ORDER.get(safe_text(current.get("Severidad")), 99),
+            -float(current.get("Confianza", 0) or 0),
+        )
+        new_rank = (
+            SEVERITY_ORDER.get(safe_text(item.get("Severidad")), 99),
+            -float(item.get("Confianza", 0) or 0),
+        )
+        if new_rank < cur_rank:
+            unique[key] = item
 
     return [unique[key] for key in order][:limit]
 
@@ -663,22 +742,32 @@ def dedupe_results_for_report(results):
     }
 
     best = {}
+    order = []
     for item in results or []:
         if not isinstance(item, dict):
             continue
 
+        if _is_low_value_repeated_row(item):
+            continue
+
         module = safe_text(item.get("Módulo", "")).strip()
-        control = safe_text(item.get("Control", "")).strip()
         status = safe_text(item.get("Resultado", "")).strip()
         sev = safe_text(item.get("Severidad", "")).strip()
         key = _result_dedupe_key(item)
-        score = (rank_status.get(status, 0), rank_sev.get(sev, 0))
+        conf = item.get("Confianza", 0)
+        try:
+            conf_score = float(conf or 0)
+        except Exception:
+            conf_score = 0.0
+        score = (rank_status.get(status, 0), rank_sev.get(sev, 0), conf_score)
 
         current = best.get(key)
         if not current or score > current[0]:
             best[key] = (score, dict(item))
+            if key not in order:
+                order.append(key)
 
-    return [row for _, row in best.values()]
+    return [best[key][1] for key in order if key in best]
 
 
 def set_document_style(document):
@@ -1050,7 +1139,7 @@ def add_authenticated_session_evidence(document, results, pages):
         and _is_meaningful_page_for_report(page)
     ]
     new_post_login_pages = [page for page in post_login_pages if page.get("is_new_post_login")]
-    display_post_login = new_post_login_pages or post_login_pages
+    display_post_login = new_post_login_pages
     protected_keywords = ["admin", "dashboard", "backoffice", "private", "restauranteadministracion"]
     protected_pages = [
         page for page in display_post_login
@@ -1068,6 +1157,12 @@ def add_authenticated_session_evidence(document, results, pages):
         f"Rutas potencialmente sensibles/protegidas: {len(protected_pages)}."
     )
 
+    if not display_post_login:
+        document.add_paragraph(
+            "No se observaron rutas nuevas relevantes tras autenticación; se omite detalle repetido para reducir ruido.",
+            style="List Bullet",
+        )
+
     for page in protected_pages[:BRIEF_MAX_AUTH_ROWS]:
         final_url = safe_text(page.get("final_url") or page.get("url"))
         classification = safe_text(page.get("classification", "sin clasificar"))
@@ -1081,7 +1176,7 @@ def add_authenticated_session_evidence(document, results, pages):
         row for row in results or []
         if safe_text(row.get("Módulo")).strip() == "Discovery post-login"
     ]
-    if post_login_results:
+    if post_login_results and display_post_login:
         document.add_paragraph(
             f"Evidencias adicionales de discovery post-login registradas: {len(post_login_results)} evento(s)."
         )
@@ -1099,10 +1194,10 @@ def add_top_findings_table(document, findings):
         document.add_paragraph("No se identificaron hallazgos prioritarios en el alcance automatizado.")
         return
 
-    table = document.add_table(rows=1, cols=5)
+    table = document.add_table(rows=1, cols=6)
     table.style = "Table Grid"
 
-    headers = ["Sev.", "Categoría", "Control", "Evidencia resumida", "Recomendación"]
+    headers = ["Sev.", "Categoría", "Control", "Conf.", "Evidencia resumida", "Recomendación"]
     hdr_row = table.rows[0]
     for i, h in enumerate(headers):
         hdr_row.cells[i].text = h
@@ -1111,11 +1206,13 @@ def add_top_findings_table(document, findings):
     for item in _prioritized_findings(findings, BRIEF_MAX_FINDINGS):
         row = table.add_row().cells
         sev = item.get("Severidad", "")
+        confidence = item.get("Confianza", "")
         row[0].text = sev
         row[1].text = item.get("Módulo", "")
         row[2].text = truncate(item.get("Control", ""), 90)
-        row[3].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 220)
-        row[4].text = truncate(item.get("Recomendación", ""), 220)
+        row[3].text = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else truncate(str(confidence), 10)
+        row[4].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 220)
+        row[5].text = truncate(item.get("Recomendación", ""), 220)
         style_severity_cell(row[0], sev)
 
 

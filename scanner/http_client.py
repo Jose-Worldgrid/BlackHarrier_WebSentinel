@@ -1,11 +1,14 @@
 import time
+import warnings
 from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# NOTE: Do NOT suppress InsecureRequestWarning globally.
+# Warnings are suppressed per-request only when verify_ssl is intentionally False.
+# Suppressing them globally would mask real MITM indicators during audits.
 
 
 DEFAULT_TIMEOUT = 15
@@ -74,6 +77,14 @@ class HttpClient:
                 "https": self.proxy_url,
             })
 
+    def _request(self, method, url, **kwargs):
+        verify = kwargs.get("verify", self.verify_ssl)
+        if verify is False:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+                return method(url, **kwargs)
+        return method(url, **kwargs)
+
     def normalize_url(self, url):
         parsed = urlparse(url)
 
@@ -90,7 +101,7 @@ class HttpClient:
         kwargs.setdefault("allow_redirects", True)
         kwargs.setdefault("verify", self.verify_ssl)
 
-        return self.session.get(url, **kwargs)
+        return self._request(self.session.get, url, **kwargs)
 
     def post(self, url, **kwargs):
         time.sleep(self.delay)
@@ -100,7 +111,7 @@ class HttpClient:
         kwargs.setdefault("allow_redirects", True)
         kwargs.setdefault("verify", self.verify_ssl)
 
-        return self.session.post(url, **kwargs)
+        return self._request(self.session.post, url, **kwargs)
 
     def head(self, url, **kwargs):
         time.sleep(self.delay)
@@ -110,7 +121,7 @@ class HttpClient:
         kwargs.setdefault("allow_redirects", True)
         kwargs.setdefault("verify", self.verify_ssl)
 
-        return self.session.head(url, **kwargs)
+        return self._request(self.session.head, url, **kwargs)
 
     def options(self, url, **kwargs):
         time.sleep(self.delay)
@@ -120,4 +131,4 @@ class HttpClient:
         kwargs.setdefault("allow_redirects", True)
         kwargs.setdefault("verify", self.verify_ssl)
 
-        return self.session.options(url, **kwargs)
+        return self._request(self.session.options, url, **kwargs)

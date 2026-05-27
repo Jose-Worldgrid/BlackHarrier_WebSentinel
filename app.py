@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import traceback
 import concurrent.futures
 from urllib.parse import urlparse
@@ -46,10 +47,12 @@ from scanner.vuln_correlation import scan_vulnerability_correlation
 from scanner.nmap_scanner import run_nmap_recon
 from scanner.nessus_client import NessusConfig, run_nessus_assessment
 from scanner.free_assessment import FreeAssessment
+from scanner.cve_lookup import CVELookup
 from scanner.offensive_intel import (
     collect_external_scan_targets,
     build_ai_recon_contract,
     contract_to_result,
+    build_asset_intel_rows,
 )
 from scanner.ai_agent import (
     enrich_pages_with_ai_context,
@@ -541,6 +544,15 @@ with st.sidebar:
         index=list(SCAN_MODES.keys()).index("Full") if "Full" in SCAN_MODES else 1,
     )
 
+    parity_nmap_nessus = st.checkbox(
+        "Modo paridad Nmap/Nessus (resultado orientado a explotación)",
+        value=True,
+        help=(
+            "Ajusta la ejecución para aproximarse al comportamiento de reconocimiento de Nmap/Nessus: "
+            "prioriza servicios/versiones, correlación CVE y cadenas de ataque."
+        ),
+    )
+
     verify_ssl = st.checkbox(
         "Validar certificados SSL/TLS",
         value=True,
@@ -585,6 +597,22 @@ with st.sidebar:
         ),
     )
 
+    authorized_engagement = st.checkbox(
+        "Confirmo autorización explícita para auditar este objetivo",
+        value=False,
+        help=(
+            "Requerido para ejecutar la auditoría. Incluye consentimiento para "
+            "reconocimiento, enumeración, pruebas ofensivas y escaneo de infraestructura."
+        ),
+    )
+
+    offensive_scope_ack = st.checkbox(
+        "Autorizo fases ofensivas y escaneo agresivo (Nmap/Nessus/Explotación)",
+        value=False,
+        disabled=not authorized_engagement,
+        help="Habilita módulos de mayor ruido e intensidad. Solo en entornos con autorización.",
+    )
+
     use_auth = st.checkbox("Usar credenciales de login")
 
     login_url = ""
@@ -603,7 +631,7 @@ with st.sidebar:
 
     mode_defaults = SCAN_MODES.get(scan_mode, {})
 
-    # Nmap – auto-detect binary; show controls only when available.
+    # Nmap – auto-detect binary; used by infra engine selector below.
     import shutil as _shutil
     import os as _os
     # shutil.which may miss Nmap if PATH was not refreshed after install.
@@ -617,44 +645,66 @@ with st.sidebar:
         or _shutil.which("nmap")
         or next((p for p in _NMAP_FALLBACK_PATHS if _os.path.isfile(p)), None)
     )
+    infra_engine_options = [
+        "Desactivado",
+        "BlackHarrier Scanner (propio)",
+    ]
     if _nmap_bin:
-        enable_nmap = st.checkbox(
-            "Activar reconocimiento Nmap",
-            value=bool(mode_defaults.get("enable_nmap", False)),
-            help=f"Binario detectado: {_nmap_bin}",
-        )
+        infra_engine_options.extend([
+            "Nmap",
+            "Nmap + BlackHarrier",
+        ])
+
+    default_engine = "Nmap + BlackHarrier" if _nmap_bin else "BlackHarrier Scanner (propio)"
+    infra_engine = st.radio(
+        "Motor de infraestructura",
+        options=infra_engine_options,
+        index=infra_engine_options.index(default_engine),
+        help=(
+            "BlackHarrier (propio): rápido, portable y sin dependencias comerciales. "
+            "Nmap: mejor fingerprinting/NSE de red. "
+            "Combinado: máxima cobertura con menor ruido duplicado en reporte." 
+        ),
+    )
+
+    st.caption(
+        "Comparativa rápida: BlackHarrier prioriza agilidad y correlación CVE integrada; "
+        "Nmap mejora detección de servicios/versiones en red. El modo combinado usa ambos y consolida resultados."
+    )
+
+    enable_nmap = infra_engine in {"Nmap", "Nmap + BlackHarrier"}
+    use_free_scanner = infra_engine in {"BlackHarrier Scanner (propio)", "Nmap + BlackHarrier"}
+
+    if enable_nmap and not _nmap_bin:
+        st.warning("Nmap no detectado en el sistema. Se mantiene solo BlackHarrier Scanner.")
+        enable_nmap = False
+
+    if enable_nmap:
         nmap_profile = st.selectbox(
             "Perfil Nmap",
             options=["SAFE", "DEEP", "AGGRESSIVE"],
             index=["SAFE", "DEEP", "AGGRESSIVE"].index(
                 str(mode_defaults.get("nmap_profile", "SAFE"))
             ),
-            disabled=not enable_nmap,
             help="SAFE: detección de versiones • DEEP: + scripts NSE + OS • AGGRESSIVE: + vuln scripts",
         )
-        if enable_nmap and nmap_profile == "AGGRESSIVE":
+        if nmap_profile == "AGGRESSIVE":
             st.warning("AGGRESSIVE ejecuta scripts NSE de vulnerabilidades (más ruidoso y lento).")
     else:
-        st.caption("Nmap no detectado. Instálalo y reinicia la herramienta para habilitarlo.")
-        enable_nmap = False
         nmap_profile = str(mode_defaults.get("nmap_profile", "SAFE"))
+
+    if not _nmap_bin:
+        st.caption("Nmap no detectado. Instálalo y reinicia la herramienta para habilitar el motor Nmap.")
+
     include_udp = bool(mode_defaults.get("nmap_udp", False))
     nmap_timeout_seconds = 420
     nmap_scripts = ""
 
-    st.markdown("**Escaneo de vulnerabilidades (opcional)**")
+    st.markdown("**Backend comercial (Nessus/Tenable)**")
     st.caption("Nessus/Tenable desactivado temporalmente: no disponible en este entorno.")
 
-    # Choose scanning backend
-    scanning_mode = st.radio(
-        "Método de escaneo",
-        options=["Desactivado", "BlackHarrier Scanner"],
-        index=0,
-        help="BlackHarrier usa Python puro (ports, SSL, CVE público)."
-    )
-    
     enable_nessus = False
-    use_free_scanner = scanning_mode == "BlackHarrier Scanner"
+    free_scanner_depth = "Completo"
     
     # Safe defaults even when Nessus is not enabled.
     nessus_mode = "nessus-local"
@@ -700,7 +750,7 @@ with st.sidebar:
     
     # Free Scanner configuration
     if use_free_scanner:
-        st.info("🔓 **BlackHarrier Scanner**: Escanea puertos TCP, fingerprinting de servicios, busca CVEs públicas y analiza SSL/TLS. Sin costos.")
+        st.info("🔓 **BlackHarrier Scanner**: Escanea puertos TCP, fingerprinting de servicios, busca CVEs públicas y analiza SSL/TLS.")
         free_scanner_depth = st.radio(
             "Profundidad del escaneo",
             options=["Rápido", "Completo"],
@@ -730,7 +780,11 @@ with st.sidebar:
         enable_exploit_ai = st.checkbox("Activar propuesta de exploits (modo offline)", value=True)
         exploit_ai_model = "llama3"
 
-    run_scan = st.button("Iniciar auditoría", type="primary")
+    run_scan = st.button(
+        "Iniciar auditoría",
+        type="primary",
+        disabled=not authorized_engagement,
+    )
 
 
 def normalize_results(module_name, results):
@@ -743,9 +797,104 @@ def normalize_results(module_name, results):
             "Descripción": item.get("description", ""),
             "Evidencia": item.get("evidence", ""),
             "Recomendación": item.get("recommendation", ""),
+            "Fase": item.get("phase", _module_to_phase(module_name)),
+            "Confianza": item.get("confidence", _result_confidence(item)),
+            "Tipo": item.get("finding_type", _result_type(item)),
         }
         for item in results
     ]
+
+
+def _module_to_phase(module_name):
+    phase_map = {
+        "Autenticación": "Acceso inicial",
+        "Enumeración de usuarios": "Enumeración",
+        "Crawler": "Reconocimiento",
+        "Discovery": "Reconocimiento",
+        "Discovery post-login": "Post-login Discovery",
+        "Mapa de URLs": "Reconocimiento",
+        "Reconocimiento": "Reconocimiento",
+        "Red e infraestructura": "Reconocimiento",
+        "Puertos y servicios": "Reconocimiento",
+        "Correlación de vulnerabilidades": "Reconocimiento",
+        "Nmap reconnaissance": "Reconocimiento",
+        "Nessus/Tenable": "Reconocimiento",
+        "Correlación IA ofensiva": "Reconocimiento",
+        "Fingerprinting avanzado": "Reconocimiento",
+        "Cabeceras de seguridad": "Reconocimiento",
+        "Cookies": "Reconocimiento",
+        "CORS": "Reconocimiento",
+        "Métodos HTTP": "Reconocimiento",
+        "API Discovery": "Enumeración",
+        "Formularios": "Enumeración",
+        "CSRF": "Explotación",
+        "XSS reflejado": "Explotación",
+        "SQL Injection": "Explotación",
+        "SQL Injection Auth (Browser)": "Explotación",
+        "Open Redirect": "Explotación",
+        "XSS DOM": "Explotación",
+        "SSTI": "Explotación",
+        "SSRF": "Explotación",
+        "Path Traversal": "Explotación",
+        "Control de acceso": "Post-explotación",
+        "JWT": "Post-explotación",
+        "Exposición de dependencias": "Post-explotación",
+        "Aseguramiento ofensivo": "Aseguramiento",
+    }
+    return phase_map.get(str(module_name or "").strip(), "Otros")
+
+
+def _result_confidence(item):
+    """Return a normalized confidence score in the [0.0, 1.0] range."""
+    status = str(item.get("status", "") or "").strip().lower()
+    severity = str(item.get("severity", "") or "").strip().lower()
+    evidence = str(item.get("evidence", "") or "").lower()
+    description = str(item.get("description", "") or "").lower()
+
+    score = 0.15
+    if status == "hallazgo":
+        score += 0.45
+    elif status == "posible hallazgo":
+        score += 0.30
+    elif status == "detectado":
+        score += 0.25
+    elif status == "correcto":
+        score += 0.30
+    elif status == "no evidenciado":
+        score += 0.10
+
+    if severity in {"crítica", "critica"}:
+        score += 0.15
+    elif severity == "alta":
+        score += 0.12
+    elif severity == "media":
+        score += 0.08
+    elif severity == "baja":
+        score += 0.04
+
+    if any(token in evidence for token in ["http://", "https://", "payload", "status", "código", "code", "marker", "marcador"]):
+        score += 0.15
+    if any(token in description for token in ["confirm", "validated", "detectado", "reflejado", "redirección", "token"]):
+        score += 0.08
+
+    return round(max(0.0, min(score, 1.0)), 2)
+
+
+def _result_type(item):
+    status = str(item.get("status", "") or "").strip().lower()
+    severity = str(item.get("severity", "") or "").strip().lower()
+
+    if status == "hallazgo":
+        return "confirmado"
+    if status == "posible hallazgo":
+        return "indicativo"
+    if status in {"correcto", "no evidenciado", "comprobado", "detectado"}:
+        return "evidencia"
+    if status == "error":
+        return "operativo"
+    if severity in {"crítica", "critica", "alta"}:
+        return "riesgo"
+    return "informativo"
 
 
 def resolve_payload_limit(*limits):
@@ -1888,6 +2037,238 @@ def _compute_free_scanner_target_limit(scan_mode, hosts_count, depth):
     return max(2, min(base, int(hosts_count or 0)))
 
 
+def _severity_from_cvss(score):
+    try:
+        value = float(score or 0)
+    except Exception:
+        value = 0.0
+    if value >= 9.0:
+        return "Crítica"
+    if value >= 7.0:
+        return "Alta"
+    if value >= 4.0:
+        return "Media"
+    if value > 0:
+        return "Baja"
+    return "Informativa"
+
+
+def _collect_cves_from_nessus_structured(nessus_structured):
+    cves = []
+    for vuln in (nessus_structured or {}).get("vulnerabilities") or []:
+        raw_cve = vuln.get("cve")
+        cvss = vuln.get("cvss")
+        plugin = str(vuln.get("plugin_name") or "Nessus plugin")
+        service = str(vuln.get("software") or "")
+
+        if isinstance(raw_cve, list):
+            candidates = raw_cve
+        else:
+            candidates = str(raw_cve or "").replace(";", ",").split(",")
+
+        for token in candidates:
+            cve_id = str(token or "").strip().upper()
+            if not cve_id.startswith("CVE-"):
+                continue
+            cves.append({
+                "id": cve_id,
+                "score": float(cvss or 0) if str(cvss or "").strip() else 0,
+                "severity": str(vuln.get("severity") or ""),
+                "description": plugin,
+                "service": service,
+                "source": "nessus",
+            })
+    return cves
+
+
+def _collect_nmap_service_cves(nmap_structured, *, max_services=8, max_cves_per_service=4):
+    """Query CVE intel for service/version pairs detected by Nmap."""
+    hosts = (nmap_structured or {}).get("hosts") or []
+    if not hosts:
+        return [], []
+
+    services = []
+    seen = set()
+    for host in hosts:
+        host_ip = str(host.get("host") or "")
+        for p in host.get("ports") or []:
+            if str(p.get("state") or "").lower() != "open":
+                continue
+            service = str(p.get("product") or p.get("service") or "").strip()
+            version = str(p.get("version") or "").strip()
+            if not service:
+                continue
+            key = f"{service.lower()}::{version.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            services.append({
+                "host": host_ip,
+                "port": p.get("port"),
+                "protocol": p.get("protocol"),
+                "service": service,
+                "version": version,
+            })
+
+    services = services[:max_services]
+    if not services:
+        return [], []
+
+    lookup = CVELookup(timeout=6.0)
+    rows = []
+    cves_flat = []
+
+    for svc in services:
+        try:
+            found = lookup.search_cves(svc["service"], svc["version"])
+        except Exception:
+            found = []
+
+        if not found:
+            continue
+
+        top = sorted(
+            found,
+            key=lambda x: float(x.get("score", 0) or 0),
+            reverse=True,
+        )[:max_cves_per_service]
+
+        for cve in top:
+            score = float(cve.get("score", 0) or 0)
+            cve_id = str(cve.get("id") or "").upper()
+            rows.append({
+                "control": f"CVE correlacionado por versión: {cve_id}",
+                "status": "Posible hallazgo" if score >= 4 else "Detectado",
+                "severity": _severity_from_cvss(score),
+                "description": (
+                    f"Servicio/version detectado por Nmap coincide con vulnerabilidad conocida: "
+                    f"{svc['service']} {svc['version'] or '(sin versión)'}"
+                ),
+                "evidence": (
+                    f"Host: {svc['host']} | Puerto: {svc['port']}/{svc['protocol']} | "
+                    f"Servicio: {svc['service']} | Versión: {svc['version'] or '-'} | "
+                    f"CVE: {cve_id} | CVSS: {score}"
+                ),
+                "recommendation": "Validar explotación en entorno controlado y aplicar parche/mitigación prioritaria.",
+            })
+            cves_flat.append({
+                "id": cve_id,
+                "score": score,
+                "severity": cve.get("severity") or "",
+                "description": cve.get("description") or "",
+                "service": svc["service"],
+                "version": svc["version"],
+                "source": "nmap-cve-correlation",
+            })
+
+    if rows:
+        rows.append({
+            "control": "Correlación CVE por servicios Nmap",
+            "status": "Detectado",
+            "severity": "Informativa",
+            "description": "Se correlacionaron servicios/versiones abiertos con bases CVE públicas.",
+            "evidence": f"Servicios analizados: {len(services)} | CVEs correlacionados: {len(cves_flat)}",
+            "recommendation": "Priorizar CVEs con CVSS>=7 y exposición directa a Internet.",
+        })
+
+    return rows, cves_flat
+
+
+def build_attack_path_intel(*, all_results, discovered_urls, cves):
+    """Create practical attack-path summaries from discovered assets and vulnerabilities."""
+    ip_regex = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+    hosts = set()
+    service_hits = 0
+    enum_findings = 0
+    api_signals = 0
+
+    for row in all_results or []:
+        module = str(row.get("Módulo") or "")
+        status = str(row.get("Resultado") or "")
+        evidence = str(row.get("Evidencia") or "")
+        control = str(row.get("Control") or "").lower()
+
+        for ip in ip_regex.findall(evidence):
+            hosts.add(ip)
+
+        if module == "Nmap reconnaissance" and "servicio expuesto" in control:
+            service_hits += 1
+
+        if module == "Enumeración de usuarios" and status in {"Hallazgo", "Posible hallazgo"}:
+            enum_findings += 1
+
+        if module == "API Discovery" and status in {"Detectado", "Hallazgo", "Posible hallazgo"}:
+            api_signals += 1
+
+    high_cves = [
+        c for c in (cves or [])
+        if float(c.get("score", 0) or 0) >= 7.0
+    ]
+
+    rows = []
+    if hosts and service_hits:
+        rows.append({
+            "control": "Cadena de ataque: infraestructura expuesta",
+            "status": "Detectado",
+            "severity": "Alta" if high_cves else "Media",
+            "description": (
+                "Se detectó superficie de infraestructura explotable: hosts/IP con servicios/versiones expuestos."
+            ),
+            "evidence": (
+                f"Hosts/IP detectados: {len(hosts)} | Servicios expuestos: {service_hits} | "
+                f"CVEs altas/críticas correlacionadas: {len(high_cves)}"
+            ),
+            "recommendation": (
+                "Priorizar endurecimiento de servicios expuestos, segmentación de red y parcheo de CVEs CVSS>=7."
+            ),
+        })
+
+    if discovered_urls and api_signals:
+        rows.append({
+            "control": "Cadena de ataque: endpoints y APIs",
+            "status": "Detectado",
+            "severity": "Media",
+            "description": "La enumeración de endpoints/API abre rutas de acceso a datos y lógica de negocio sensible.",
+            "evidence": (
+                f"URLs descubiertas: {len(discovered_urls)} | Señales API: {api_signals}"
+            ),
+            "recommendation": "Validar authN/authZ por endpoint, rate limiting y exposición de datos sensibles.",
+        })
+
+    if enum_findings > 0:
+        rows.append({
+            "control": "Cadena de ataque: enumeración de usuarios",
+            "status": "Posible hallazgo",
+            "severity": "Media",
+            "description": "Se observaron diferencias de respuesta compatibles con enumeración de usuarios.",
+            "evidence": f"Controles con señal de enumeración: {enum_findings}",
+            "recommendation": "Uniformar respuestas de autenticación y reforzar lockout/rate-limit por identidad/IP.",
+        })
+
+    if high_cves:
+        sample = ", ".join([str(c.get("id")) for c in high_cves[:5]])
+        rows.append({
+            "control": "Priorización de explotación por CVE",
+            "status": "Detectado",
+            "severity": "Alta",
+            "description": "Se identificaron CVEs con prioridad de validación de explotación en entorno controlado.",
+            "evidence": f"CVEs CVSS>=7: {len(high_cves)} | Muestra: {sample}",
+            "recommendation": "Validar exploitabilidad real, impacto y alcance antes de remediación final.",
+        })
+
+    if not rows:
+        rows.append({
+            "control": "Cadena de ataque",
+            "status": "No evidenciado",
+            "severity": "Informativa",
+            "description": "No se reunió evidencia suficiente para construir una cadena de ataque completa.",
+            "evidence": "Superficie o correlación insuficiente en esta ejecución.",
+            "recommendation": "Ampliar alcance autenticado y escaneo de infraestructura para mejorar la correlación.",
+        })
+
+    return rows
+
+
 def _scan_phase1(
     target_url,
     scan_mode,
@@ -2289,6 +2670,7 @@ def _scan_phase1(
 
     nmap_structured = {"hosts": []}
     external_hosts = external_targets.get("hosts", [])
+    candidate_targets = []
     external_target_limit = _compute_external_target_limit(
         scan_mode=scan_mode,
         hosts_count=len(external_hosts),
@@ -2329,6 +2711,19 @@ def _scan_phase1(
                 progress_callback=nmap_progress,
             )
         all_results.extend(normalize_results("Nmap reconnaissance", nmap_rows))
+
+        parity_enabled = bool(st.session_state.get("_parity_nmap_nessus", False))
+        if parity_enabled or str(nmap_profile or "").upper() in {"DEEP", "AGGRESSIVE"}:
+            with st.spinner("Correlando CVEs por servicios/versiones detectados por Nmap..."):
+                nmap_cve_rows, nmap_cves = _collect_nmap_service_cves(
+                    nmap_structured,
+                    max_services=10 if parity_enabled else 6,
+                    max_cves_per_service=4,
+                )
+            if nmap_cve_rows:
+                all_results.extend(normalize_results("Correlación CVE (Nmap)", nmap_cve_rows))
+            if nmap_cves:
+                _all_cves_found.extend(nmap_cves)
 
         # Drain progress queue and show last meaningful event in UI (safe — main thread).
         last_event: dict | None = None
@@ -2383,6 +2778,7 @@ def _scan_phase1(
                 progress_callback=nessus_progress,
             )
         all_results.extend(normalize_results("Nessus/Tenable", nessus_rows))
+        _all_cves_found.extend(_collect_cves_from_nessus_structured(nessus_structured))
     
     elif use_free_scanner:
         free_status = st.empty()
@@ -2466,10 +2862,22 @@ def _scan_phase1(
     )
     all_results.extend(normalize_results("Correlación IA ofensiva", [contract_to_result(ai_contract)]))
 
+    if _all_cves_found:
+        cve_best = {}
+        for cve in _all_cves_found:
+            cve_id = str(cve.get("id") or "").strip().upper()
+            if not cve_id.startswith("CVE-"):
+                continue
+            score = float(cve.get("score", 0) or 0)
+            current = cve_best.get(cve_id)
+            if current is None or score > float(current.get("score", 0) or 0):
+                cve_best[cve_id] = dict(cve)
+        _all_cves_found = list(cve_best.values())
+
     all_results.extend(run_module("Validando TLS/HTTPS...", "TLS/HTTPS", scan_tls, target_url))
     all_results.extend(run_module("Analizando cabeceras...", "Cabeceras de seguridad", scan_security_headers, target_url, auth_client))
     all_results.extend(run_module("Analizando cookies...", "Cookies", scan_cookies, target_url))
-    all_results.extend(run_module("Analizando CORS...", "CORS", scan_cors, target_url))
+    all_results.extend(run_module("Analizando CORS...", "CORS", scan_cors, target_url, pages))
     all_results.extend(run_module("Analizando métodos HTTP...", "Métodos HTTP", scan_http_methods, target_url))
     all_results.extend(run_module("Buscando recursos sensibles...", "Recursos sensibles", scan_sensitive_files, target_url))
     all_results.extend(run_module("Buscando directory listing...", "Directory Listing", scan_directory_listing, target_url))
@@ -2477,6 +2885,20 @@ def _scan_phase1(
     all_results.extend(run_module("Analizando formularios...", "Formularios", scan_forms_from_pages, pages))
     all_results.extend(run_module("Analizando CSRF...", "CSRF", scan_csrf_from_pages, pages))
     all_results.extend(run_module("Fingerprinting avanzado de tecnologías...", "Fingerprinting avanzado", scan_technology_fingerprint, target_url, pages))
+    all_results.extend(normalize_results("Inteligencia ofensiva", build_attack_path_intel(
+        all_results=all_results,
+        discovered_urls=discovered_urls,
+        cves=_all_cves_found,
+    )))
+
+    asset_intel_rows, candidate_targets = build_asset_intel_rows(
+        target_url=target_url,
+        external_targets=external_targets,
+        nmap_data=nmap_structured,
+        discovered_urls=discovered_urls,
+        cves=_all_cves_found,
+    )
+    all_results.extend(normalize_results("Inteligencia de activos", asset_intel_rows))
 
     auth_attack_pages = dedupe_pages_by_url(build_auth_attack_pages(pages))
     attackable_pages = dedupe_pages_by_url([p for p in pages if is_generic_attack_page(p)])
@@ -2530,6 +2952,7 @@ def _scan_phase1(
         "target_url": target_url,
         "sqli_intensity": st.session_state.get("_sqli_intensity", "Normal - 30 payloads"),
         "strict_fp_mode": bool(strict_fp_mode),
+        "candidate_targets": candidate_targets,
     }
 
 
@@ -2712,10 +3135,32 @@ if run_scan:
         st.error("Debes introducir una URL objetivo.")
         st.stop()
 
+    if not authorized_engagement:
+        st.error("La auditoría requiere autorización explícita antes de ejecutar cualquier fase.")
+        st.stop()
+
     st.session_state["_target_url"] = target_url
     st.session_state["_sqli_intensity"] = sqli_intensity
     st.session_state["_enable_exploit_ai"] = enable_exploit_ai
     st.session_state["_exploit_ai_model"] = exploit_ai_model
+    st.session_state["_authorized_engagement"] = authorized_engagement
+    st.session_state["_offensive_scope_ack"] = offensive_scope_ack
+    st.session_state["_parity_nmap_nessus"] = bool(parity_nmap_nessus)
+
+    if parity_nmap_nessus:
+        if _nmap_bin:
+            enable_nmap = True
+            nmap_profile = "AGGRESSIVE" if offensive_scope_ack else "DEEP"
+            include_udp = bool(offensive_scope_ack)
+        if offensive_scope_ack and not enable_nessus and not use_free_scanner:
+            use_free_scanner = True
+            st.info("Modo paridad activado: backend de vulnerabilidades habilitado para correlación CVE.")
+
+    if not offensive_scope_ack:
+        enable_nmap = False
+        enable_nessus = False
+        use_free_scanner = False
+        st.info("Se ejecutará solo la parte de reconocimiento y enumeración. Las fases ofensivas quedaron desactivadas.")
 
     state = _scan_phase1(
         target_url=target_url,
@@ -2886,130 +3331,142 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             unsafe_allow_html=True,
         )
 
+    allow_offensive_actions = bool(st.session_state.get("_offensive_scope_ack", False))
+
     # ── Parallel offensive HTTP modules (all independent, no Playwright) ────
-    effective_pages = attackable_pages or [{
-        "url": target_url, "final_url": target_url,
-        "status_code": 200, "html": "", "forms": [],
-        "classification": "fallback_target",
-    }]
+    if allow_offensive_actions:
+        effective_pages = attackable_pages or [{
+            "url": target_url, "final_url": target_url,
+            "status_code": 200, "html": "", "forms": [],
+            "classification": "fallback_target",
+        }]
 
-    parallel_jobs, ranked_plan, target_features = build_adaptive_parallel_jobs(
-        target_url=target_url,
-        pages=pages,
-        effective_pages=effective_pages,
-        auth_client=auth_client,
-        scan_payload_limit=scan_payload_limit,
-    )
-    parallel_jobs, ranked_plan = reprioritize_for_authenticated_session(
-        parallel_jobs,
-        ranked_plan,
-        auth_status,
-    )
-
-    with st.expander("Plan ofensivo inteligente (AI Planner)", expanded=False):
-        st.caption(
-            "El orden se calcula por puntuación contextual: recomendaciones AI por página, "
-            "efectividad histórica por módulo y señales detectadas en la superficie actual."
+        parallel_jobs, ranked_plan, target_features = build_adaptive_parallel_jobs(
+            target_url=target_url,
+            pages=pages,
+            effective_pages=effective_pages,
+            auth_client=auth_client,
+            scan_payload_limit=scan_payload_limit,
         )
-        st.json({
-            "strict_fp_mode": bool(strict_fp_mode),
-            "target_features": target_features,
-            "ranked_modules": [
-                {
-                    "module": item["name"],
-                    "score": item["score"],
-                    "ai_score": item["ai_score"],
-                    "memory_score": item["memory_score"],
-                    "context_boost": item["context_boost"],
-                }
-                for item in ranked_plan
-            ],
-        })
+        parallel_jobs, ranked_plan = reprioritize_for_authenticated_session(
+            parallel_jobs,
+            ranked_plan,
+            auth_status,
+        )
 
-    parallel_status = st.empty()
-    parallel_status.info(f"Ejecutando {len(parallel_jobs)} módulos ofensivos en paralelo (modo adaptativo)...")
-
-    parallel_results: dict[str, list] = {}
-    queue = list(parallel_jobs)
-    in_flight: dict = {}
-    pressure = 0
-    max_pressure = 0
-    window = adaptive_parallel_window(pressure, strict_mode=bool(strict_fp_mode))
-    done_count = 0
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-        while queue and len(in_flight) < window:
-            name, func, args = queue.pop(0)
-            in_flight[executor.submit(_run_raw, func, *args)] = name
-
-        while in_flight:
-            done_set, _ = concurrent.futures.wait(
-                set(in_flight.keys()),
-                return_when=concurrent.futures.FIRST_COMPLETED,
+        with st.expander("Plan ofensivo inteligente (AI Planner)", expanded=False):
+            st.caption(
+                "El orden se calcula por puntuación contextual: recomendaciones AI por página, "
+                "efectividad histórica por módulo y señales detectadas en la superficie actual."
             )
+            st.json({
+                "strict_fp_mode": bool(strict_fp_mode),
+                "target_features": target_features,
+                "ranked_modules": [
+                    {
+                        "module": item["name"],
+                        "score": item["score"],
+                        "ai_score": item["ai_score"],
+                        "memory_score": item["memory_score"],
+                        "context_boost": item["context_boost"],
+                    }
+                    for item in ranked_plan
+                ],
+            })
 
-            for future in done_set:
-                name = in_flight.pop(future)
-                done_count += 1
+        parallel_status = st.empty()
+        parallel_status.info(f"Ejecutando {len(parallel_jobs)} módulos ofensivos en paralelo (modo adaptativo)...")
 
-                try:
-                    raw = future.result()
-                    normalized = normalize_results(name, sanitize_module_results(raw or []))
-                    if not normalized:
-                        normalized = normalize_results(name, [{
-                            "control": name,
-                            "status": "No evidenciado",
-                            "severity": "Informativa",
-                            "description": "Módulo ejecutado sin observaciones en esta ejecución.",
-                            "evidence": "Sin hallazgos ni errores técnicos reportados por el módulo.",
-                            "recommendation": "Mantener monitorización y repetir en siguientes iteraciones.",
-                        }])
-                    parallel_results[name] = normalized
-                except Exception:
-                    normalized = normalize_results(name, [{
-                        "control": name,
-                        "status": "Error",
-                        "severity": "Media",
-                        "description": "Error inesperado en módulo paralelo.",
-                        "evidence": traceback.format_exc(),
-                        "recommendation": "Revisar trazas y dependencias del módulo.",
-                    }])
-                    parallel_results[name] = normalized
+        parallel_results: dict[str, list] = {}
+        queue = list(parallel_jobs)
+        in_flight: dict = {}
+        pressure = 0
+        max_pressure = 0
+        window = adaptive_parallel_window(pressure, strict_mode=bool(strict_fp_mode))
+        done_count = 0
 
-                module_pressure = estimate_defense_pressure(parallel_results.get(name, []))
-                pressure = max(0, pressure - 1) + module_pressure
-                max_pressure = max(max_pressure, pressure)
-                window = adaptive_parallel_window(pressure, strict_mode=bool(strict_fp_mode))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            while queue and len(in_flight) < window:
+                name, func, args = queue.pop(0)
+                in_flight[executor.submit(_run_raw, func, *args)] = name
 
-                while queue and len(in_flight) < window:
-                    next_name, next_func, next_args = queue.pop(0)
-                    in_flight[executor.submit(_run_raw, next_func, *next_args)] = next_name
-
-                parallel_status.info(
-                    f"Módulos completados: {done_count}/{len(parallel_jobs)} | "
-                    f"Último: {name} | presión defensiva: {pressure} | ventana: {window}"
+            while in_flight:
+                done_set, _ = concurrent.futures.wait(
+                    set(in_flight.keys()),
+                    return_when=concurrent.futures.FIRST_COMPLETED,
                 )
 
-    parallel_status.success(
-        f"Módulos ofensivos HTTP completados ({len(parallel_jobs)}). "
-        f"Pico de presión defensiva observado: {max_pressure}."
-    )
+                for future in done_set:
+                    name = in_flight.pop(future)
+                    done_count += 1
 
-    all_results.extend(normalize_results("Orquestación ofensiva", [{
-        "control": "Planificador adaptativo anti-bloqueo",
-        "status": "Comprobado",
-        "severity": "Informativa",
-        "description": "La ejecución paralela ajustó dinámicamente la concurrencia ante señales de WAF/rate-limit.",
-        "evidence": (
-            f"Módulos planificados: {len(parallel_jobs)} | "
-            f"Pico presión defensiva: {max_pressure} | "
-            f"Modo estricto anti-FP: {bool(strict_fp_mode)}"
-        ),
-        "recommendation": "Mantener modo adaptativo para reducir falsos negativos por bloqueo temporal o rate limiting.",
-    }]))
+                    try:
+                        raw = future.result()
+                        normalized = normalize_results(name, sanitize_module_results(raw or []))
+                        if not normalized:
+                            normalized = normalize_results(name, [{
+                                "control": name,
+                                "status": "No evidenciado",
+                                "severity": "Informativa",
+                                "description": "Módulo ejecutado sin observaciones en esta ejecución.",
+                                "evidence": "Sin hallazgos ni errores técnicos reportados por el módulo.",
+                                "recommendation": "Mantener monitorización y repetir en siguientes iteraciones.",
+                            }])
+                        parallel_results[name] = normalized
+                    except Exception:
+                        normalized = normalize_results(name, [{
+                            "control": name,
+                            "status": "Error",
+                            "severity": "Media",
+                            "description": "Error inesperado en módulo paralelo.",
+                            "evidence": traceback.format_exc(),
+                            "recommendation": "Revisar trazas y dependencias del módulo.",
+                        }])
+                        parallel_results[name] = normalized
 
-    for name, _ , _ in parallel_jobs:
-        all_results.extend(parallel_results.get(name, []))
+                    module_pressure = estimate_defense_pressure(parallel_results.get(name, []))
+                    pressure = max(0, pressure - 1) + module_pressure
+                    max_pressure = max(max_pressure, pressure)
+                    window = adaptive_parallel_window(pressure, strict_mode=bool(strict_fp_mode))
+
+                    while queue and len(in_flight) < window:
+                        next_name, next_func, next_args = queue.pop(0)
+                        in_flight[executor.submit(_run_raw, next_func, *next_args)] = next_name
+
+                    parallel_status.info(
+                        f"Módulos completados: {done_count}/{len(parallel_jobs)} | "
+                        f"Último: {name} | presión defensiva: {pressure} | ventana: {window}"
+                    )
+
+        parallel_status.success(
+            f"Módulos ofensivos HTTP completados ({len(parallel_jobs)}). "
+            f"Pico de presión defensiva observado: {max_pressure}."
+        )
+
+        all_results.extend(normalize_results("Orquestación ofensiva", [{
+            "control": "Planificador adaptativo anti-bloqueo",
+            "status": "Comprobado",
+            "severity": "Informativa",
+            "description": "La ejecución paralela ajustó dinámicamente la concurrencia ante señales de WAF/rate-limit.",
+            "evidence": (
+                f"Módulos planificados: {len(parallel_jobs)} | "
+                f"Pico presión defensiva: {max_pressure} | "
+                f"Modo estricto anti-FP: {bool(strict_fp_mode)}"
+            ),
+            "recommendation": "Mantener modo adaptativo para reducir falsos negativos por bloqueo temporal o rate limiting.",
+        }]))
+
+        for name, _ , _ in parallel_jobs:
+            all_results.extend(parallel_results.get(name, []))
+    else:
+        all_results.extend(normalize_results("Orquestación ofensiva", [{
+            "control": "Planificador adaptativo anti-bloqueo",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "La fase ofensiva paralela quedó desactivada por falta de consentimiento reforzado.",
+            "evidence": "offensive_scope_ack=False",
+            "recommendation": "Confirmar autorización ofensiva si se quiere ejecutar la batería de explotación controlada.",
+        }]))
 
     # ── Auth SQLi (Playwright browser — sequential, must stay single-threaded) ──
     if auth_status == "Autenticado":
@@ -3021,7 +3478,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             "evidence": "Autenticación previa confirmada en Fase 1.",
             "recommendation": "Enfocar pruebas en autorización post-login, exposición de datos y privilegios.",
         }]
-    else:
+    elif allow_offensive_actions:
         with st.spinner(f"Probando SQLi en autenticación ({sqli_intensity})..."):
             auth_sqli_results = scan_auth_sqli(
                 pages=auth_attack_pages,
@@ -3030,6 +3487,15 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                 headless=True,
                 progress_callback=attack_progress_event,
             )
+    else:
+        auth_sqli_results = [{
+            "control": "SQLi/bypass en autenticación",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "Se omitió SQLi de autenticación por falta de consentimiento reforzado.",
+            "evidence": "offensive_scope_ack=False",
+            "recommendation": "Confirmar autorización ofensiva para evaluar bypasses de login.",
+        }]
 
     should_escalate_auth = (
         auth_status != "Autenticado"

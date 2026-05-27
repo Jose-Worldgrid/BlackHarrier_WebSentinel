@@ -3,13 +3,13 @@
   "attack_effectiveness": {
     "unknown": {
       "Cabeceras de seguridad": {
-        "attempts": 127,
+        "attempts": 139,
         "successes": 0,
         "partials": 0,
-        "failures": 127,
+        "failures": 139,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-05-26T12:23:14.158696",
+        "last_used": "2026-05-27T11:36:53.839053",
         "payloads_used": [
           {
             "payload": "",
@@ -772,17 +772,89 @@
             "result": "Baja",
             "reason": "Ausencia de Permissions-Policy.",
             "timestamp": "2026-05-26T12:23:14.158715"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-05-27T10:07:26.989723"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-05-27T10:07:26.995963"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-05-27T10:07:27.003216"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-05-27T10:07:27.009301"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-05-27T10:07:27.015318"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-05-27T10:07:27.021716"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-05-27T11:36:53.790442"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-05-27T11:36:53.801050"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-05-27T11:36:53.808886"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-05-27T11:36:53.817472"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-05-27T11:36:53.829731"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-05-27T11:36:53.839082"
           }
         ]
       },
       "Puertos y servicios": {
-        "attempts": 19,
+        "attempts": 21,
         "successes": 0,
         "partials": 0,
-        "failures": 19,
+        "failures": 21,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-05-26T12:23:14.119383",
+        "last_used": "2026-05-27T11:36:53.738283",
         "payloads_used": [
           {
             "payload": "",
@@ -897,17 +969,29 @@
             "result": "Media",
             "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
             "timestamp": "2026-05-26T12:23:14.119399"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-05-27T10:07:26.946262"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-05-27T11:36:53.738308"
           }
         ]
       },
       "Correlación de vulnerabilidades": {
-        "attempts": 83,
+        "attempts": 95,
         "successes": 0,
         "partials": 0,
-        "failures": 83,
+        "failures": 95,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-05-26T12:23:14.140791",
+        "last_used": "2026-05-27T11:36:53.783428",
         "payloads_used": [
           {
             "payload": "",
@@ -1406,17 +1490,89 @@
             "result": "Baja",
             "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
             "timestamp": "2026-05-26T12:23:14.140812"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-05-27T10:07:26.952291"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-05-27T10:07:26.958573"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-05-27T10:07:26.965270"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-05-27T10:07:26.970301"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-05-27T10:07:26.976042"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-05-27T10:07:26.982179"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-05-27T11:36:53.746112"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-05-27T11:36:53.754015"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-05-27T11:36:53.762153"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-05-27T11:36:53.770438"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-05-27T11:36:53.775573"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-05-27T11:36:53.783447"
           }
         ]
       },
       "Red e infraestructura": {
-        "attempts": 11,
+        "attempts": 13,
         "successes": 0,
         "partials": 0,
-        "failures": 11,
+        "failures": 13,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-05-26T12:23:14.115981",
+        "last_used": "2026-05-27T11:36:53.729964",
         "payloads_used": [
           {
             "payload": "",
@@ -1483,6 +1639,18 @@
             "result": "Media",
             "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
             "timestamp": "2026-05-26T12:23:14.115999"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-05-27T10:07:26.940570"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-05-27T11:36:53.729990"
           }
         ]
       },
@@ -1705,7 +1873,7 @@
       "filters": [],
       "waf_types": [],
       "attack_results": {},
-      "last_scanned": "2026-05-26T12:23:14.109398"
+      "last_scanned": "2026-05-27T11:36:53.716587"
     },
     "http://a45b012245f704cdf8ba0d06fbc6578c-296074868.us-east-1.elb.amazonaws.com/login": {
       "frameworks": {},

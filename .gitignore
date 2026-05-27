@@ -8,6 +8,8 @@ __pycache__/
 
 audit_results.db
 *.db
+storage/.db_key
+storage/audit_results.db
 generated_reports/
 *.docx
 storage/ai_agent_memory.json

@@ -198,30 +198,64 @@ def mutate_url_param(url, payload):
 
 
 def test_time_based(client, form, time_payload_entry, time_threshold=3.5):
-    """Returns (vulnerable, db_type, measured_delay) or (False, '', 0)."""
+    """
+    Statistical time-based SQLi detection.
+
+    1. Measure BASELINE_SAMPLES benign responses to compute mean + stdev.
+    2. Send the timed payload and measure response time.
+    3. Consider vulnerable only if:
+       - Measured delay ≥ max(time_threshold, baseline_mean + 3 * baseline_stdev)
+       - Avoids false positives on already-slow servers.
+
+    Returns (vulnerable: bool, db_type: str, measured_delay: float)
+    """
+    import statistics
+
     payload_true = time_payload_entry["true"]
-    payload_false = time_payload_entry["false"]
+    payload_false = time_payload_entry["false"]   # benign, near-zero sleep
     db = time_payload_entry["db"]
 
+    BASELINE_SAMPLES = 3  # number of benign measurements
+
+    # --- Baseline phase ---
+    baseline_times: list[float] = []
+    for _ in range(BASELINE_SAMPLES):
+        try:
+            t0 = time.monotonic()
+            r = submit_form(client, form, payload_false)
+            elapsed = time.monotonic() - t0
+            if r is not None:
+                baseline_times.append(elapsed)
+        except Exception:
+            logger.debug("Fallo en medición baseline SQLi time-based", exc_info=True)
+
+    if not baseline_times:
+        return False, db, 0
+
+    baseline_mean = statistics.mean(baseline_times)
+    baseline_stdev = statistics.stdev(baseline_times) if len(baseline_times) > 1 else 0.5
+
+    # Dynamic threshold: at least time_threshold seconds, but also at least
+    # mean + 3 × stdev above baseline (reduces false positives on slow servers)
+    dynamic_threshold = max(time_threshold, baseline_mean + 3 * baseline_stdev)
+
+    # --- Timed payload phase ---
     try:
-        # baseline
-        t0 = time.monotonic()
-        r_false = submit_form(client, form, payload_false)
-        t_false = time.monotonic() - t0
-
-        if not r_false:
-            return False, db, 0
-
-        # timed payload
         t0 = time.monotonic()
         r_true = submit_form(client, form, payload_true)
         t_true = time.monotonic() - t0
 
-        delay = t_true - t_false
-        if delay >= time_threshold:
-            return True, db, round(delay, 2)
+        delay_over_baseline = t_true - baseline_mean
+
+        if delay_over_baseline >= dynamic_threshold:
+            logger.debug(
+                "SQLi time-based detectado: db=%s delay=%.2fs baseline=%.2fs threshold=%.2fs",
+                db, t_true, baseline_mean, dynamic_threshold,
+            )
+            return True, db, round(t_true, 2)
+
     except Exception:
-        logger.debug("Fallo en prueba SQLi time-based", exc_info=True)
+        logger.debug("Fallo en prueba SQLi time-based (payload)", exc_info=True)
 
     return False, db, 0
 

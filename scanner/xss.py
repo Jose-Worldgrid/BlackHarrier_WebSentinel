@@ -1,5 +1,7 @@
 from bs4 import BeautifulSoup
 import logging
+import re
+import html as _html_mod
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from scanner.http_client import HttpClient
 from scanner.forms import extract_forms_from_html
@@ -8,8 +10,96 @@ from scanner.forms import extract_forms_from_html
 logger = logging.getLogger(__name__)
 
 
-# Marcador único de auditoría
+# Marcador único de auditoría – suficientemente raro para evitar colisiones
 XSS_MARKER = "bh_xss_9r4k"
+
+# Atributos de evento HTML que pueden ejecutar JS
+_EVENT_ATTRS = re.compile(
+    r'\b(on(?:load|error|click|mouse\w+|focus|blur|input|change|submit|key\w+|'
+    r'drag\w*|drop|resize|scroll|unload|beforeunload|message|popstate|'
+    r'hashchange|storage|animat\w+|transit\w+|pointer\w+|touch\w+))\s*=',
+    re.IGNORECASE,
+)
+
+
+def _reflection_context(response_html: str, marker: str) -> str:
+    """
+    Determine the rendering context in which *marker* appears in *response_html*.
+
+    Returns one of:
+        'script'      – inside a <script> block (almost always exploitable)
+        'event'       – inside an event-handler attribute (onclick=, onerror=, …)
+        'href_js'     – inside href="javascript:…"
+        'attribute'   – reflected raw (unencoded) inside an HTML attribute value
+        'text'        – reflected raw in page text (may be exploitable)
+        'encoded'     – marker present only in HTML-entity-encoded form (safe)
+        'absent'      – marker not found at all
+    """
+    if not marker or not response_html:
+        return "absent"
+
+    lower_html = response_html.lower()
+    lower_marker = marker.lower()
+
+    # Quick bail-out: if the raw marker is completely absent, check encoded form
+    if lower_marker not in lower_html:
+        encoded = _html_mod.escape(marker, quote=True).lower()
+        if encoded in lower_html:
+            return "encoded"
+        return "absent"
+
+    try:
+        soup = BeautifulSoup(response_html, "html.parser")
+    except Exception:
+        # If we can't parse, treat any raw appearance as potentially dangerous
+        return "text"
+
+    # 1. Check <script> blocks (highest risk)
+    for script in soup.find_all("script"):
+        src = script.get("src") or ""
+        content = (script.string or "")
+        if lower_marker in content.lower() or lower_marker in src.lower():
+            return "script"
+
+    # 2. Check all attributes on all tags
+    for tag in soup.find_all(True):
+        for attr, val in (tag.attrs or {}).items():
+            val_str = " ".join(val) if isinstance(val, list) else str(val or "")
+            if lower_marker not in val_str.lower():
+                continue
+            # Event handler attribute
+            if _EVENT_ATTRS.match(attr + "="):
+                return "event"
+            # href/action/src with javascript:
+            if attr.lower() in ("href", "action", "src", "formaction", "data"):
+                if "javascript:" in val_str.lower():
+                    return "href_js"
+            # Any other attribute – raw (unencoded) reflection
+            return "attribute"
+
+    # 3. Visible text nodes
+    body_text = soup.get_text()
+    if lower_marker in body_text.lower():
+        return "text"
+
+    # 4. Marker is present in the raw HTML but was HTML-entity encoded
+    return "encoded"
+
+
+def _severity_for_context(context: str) -> tuple[str, str]:
+    """Return (severity, status) for a given reflection context."""
+    if context in ("script", "event", "href_js"):
+        return "Alta", "Hallazgo"
+    if context == "attribute":
+        return "Alta", "Posible hallazgo"
+    if context == "text":
+        return "Media", "Posible hallazgo"
+    # encoded or absent → not exploitable as-is
+    return "Informativa", "No evidenciado"
+
+
+def _is_exploitable_context(context: str) -> bool:
+    return context in ("script", "event", "href_js", "attribute", "text")
 
 XSS_PAYLOADS = [
     # Básicos con marcador auditable
@@ -104,82 +194,127 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
             for payload in payloads:
                 try:
                     response = submit_form(client, form, payload)
+                    if not response:
+                        continue
 
-                    if payload in (response.text or ""):
+                    resp_text = response.text or ""
+
+                    # Context-aware reflection check using the unique marker
+                    # For payloads containing the marker, check context directly
+                    check_token = XSS_MARKER if XSS_MARKER in payload else payload
+                    context = _reflection_context(resp_text, check_token)
+
+                    if _is_exploitable_context(context):
+                        severity, status = _severity_for_context(context)
                         results.append({
                             "control": f"XSS reflejado - formulario {form['index']}",
-                            "status": "Posible hallazgo",
-                            "severity": "Alta",
-                            "description": "Entrada reflejada sin neutralización evidente.",
-                            "evidence": f"URL: {form['action']} | Payload reflejado: {payload}",
-                            "recommendation": "Aplicar codificación de salida contextual, sanitización y CSP restrictiva."
+                            "status": status,
+                            "severity": severity,
+                            "description": (
+                                f"Entrada reflejada en contexto '{context}' sin neutralización efectiva. "
+                                "La codificación HTML de entidades NO estaba presente."
+                            ),
+                            "evidence": (
+                                f"URL: {form['action']} | Payload: {payload} | "
+                                f"Contexto de reflejo: {context}"
+                            ),
+                            "recommendation": (
+                                "Aplicar codificación de salida contextual (HTML, JS, URL según contexto), "
+                                "sanitización server-side y CSP restrictiva con nonce/hash."
+                            ),
                         })
                         break
 
-                    # Blind/Stored hint: check for partial marker
-                    if XSS_MARKER in (response.text or ""):
+                    # Blind/Stored hint: marker in response but form uses a different payload
+                    if XSS_MARKER in resp_text and XSS_MARKER not in payload:
                         results.append({
                             "control": f"XSS potencialmente almacenado - formulario {form['index']}",
                             "status": "Posible hallazgo",
                             "severity": "Alta",
-                            "description": "Marcador de auditoría presente en respuesta. Puede ser XSS stored si aparece en otra URL.",
+                            "description": (
+                                "Marcador de auditoría presente en respuesta tras enviar payload distinto. "
+                                "Puede ser XSS almacenado si el marcador persiste en otra URL."
+                            ),
                             "evidence": f"URL: {form['action']} | Marcador: {XSS_MARKER}",
-                            "recommendation": "Verificar si el marcador aparece en otras rutas; si así es, es XSS almacenado."
+                            "recommendation": (
+                                "Verificar si el marcador aparece en otras rutas del sitio. "
+                                "Si persiste, es XSS almacenado confirmado."
+                            ),
                         })
                         break
 
                 except Exception as exc:
-                    results.append({
-                        "control": "XSS reflejado",
-                        "status": "Error",
-                        "severity": "Media",
-                        "description": "Error durante prueba XSS controlada.",
-                        "evidence": str(exc),
-                        "recommendation": "Revisar conectividad y comportamiento del formulario."
-                    })
+                    logger.debug("Error en prueba XSS formulario", exc_info=True)
 
+        # GET query-parameter reflection
         for payload in payloads:
             try:
                 response = test_query_params(client, page_url, payload)
-
-                if response and (payload in (response.text or "") or XSS_MARKER in (response.text or "")):
+                if not response:
+                    continue
+                resp_text = response.text or ""
+                check_token = XSS_MARKER if XSS_MARKER in payload else payload
+                context = _reflection_context(resp_text, check_token)
+                if _is_exploitable_context(context):
+                    severity, status = _severity_for_context(context)
                     results.append({
                         "control": "XSS reflejado - parámetro GET",
-                        "status": "Posible hallazgo",
-                        "severity": "Alta",
-                        "description": "Parámetro GET reflejado en la respuesta.",
-                        "evidence": f"URL: {page_url} | Payload reflejado: {payload}",
-                        "recommendation": "Codificar salida, validar parámetros y aplicar CSP."
+                        "status": status,
+                        "severity": severity,
+                        "description": (
+                            f"Parámetro GET reflejado en contexto '{context}' sin codificación efectiva."
+                        ),
+                        "evidence": (
+                            f"URL: {page_url} | Payload: {payload} | "
+                            f"Contexto: {context}"
+                        ),
+                        "recommendation": (
+                            "Codificar salida según contexto, validar parámetros y aplicar CSP."
+                        ),
                     })
                     break
-
             except Exception:
                 logger.debug("Fallo en prueba XSS GET", exc_info=True)
 
-        # Header injection XSS
+        # HTTP Header injection XSS
         for header_name, header_payload in REFLECTIVE_HEADERS:
             try:
                 response = client.get(page_url, headers={header_name: header_payload})
-                if XSS_MARKER in (response.text or ""):
+                resp_text = response.text or ""
+                context = _reflection_context(resp_text, XSS_MARKER)
+                if _is_exploitable_context(context):
+                    severity, status = _severity_for_context(context)
                     results.append({
                         "control": f"XSS por cabecera HTTP: {header_name}",
-                        "status": "Posible hallazgo",
-                        "severity": "Media",
-                        "description": f"El valor de la cabecera {header_name} se refleja sin codificar en la respuesta.",
-                        "evidence": f"URL: {page_url} | Cabecera: {header_name}: {header_payload}",
-                        "recommendation": "No reflejar cabeceras HTTP en respuestas sin codificación contextual."
+                        "status": status,
+                        "severity": severity,
+                        "description": (
+                            f"Valor de la cabecera {header_name} reflejado en contexto '{context}' "
+                            "sin codificación efectiva."
+                        ),
+                        "evidence": (
+                            f"URL: {page_url} | Cabecera: {header_name} | "
+                            f"Contexto: {context}"
+                        ),
+                        "recommendation": (
+                            "No reflejar cabeceras HTTP en respuestas. "
+                            "Aplicar codificación contextual si es inevitable."
+                        ),
                     })
             except Exception:
-                logger.debug("Fallo en prueba XSS por cabeceras", exc_info=True)
+                logger.debug("Fallo en prueba XSS cabeceras", exc_info=True)
 
     if not results:
         results.append({
             "control": "XSS reflejado",
             "status": "No evidenciado",
             "severity": "Informativa",
-            "description": "No se detectó reflejo directo de payloads controlados.",
-            "evidence": "Sin reflejo identificado.",
-            "recommendation": "Complementar con pruebas autenticadas y revisión manual."
+            "description": (
+                "No se detectó reflejo explotable de payloads controlados en ningún contexto HTML/JS. "
+                "Las reflexiones encontradas estaban correctamente codificadas como entidades HTML."
+            ),
+            "evidence": "Sin reflejo en contexto peligroso identificado.",
+            "recommendation": "Complementar con pruebas autenticadas, DOM XSS dinámico y revisión manual."
         })
 
     return results

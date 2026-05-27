@@ -68,8 +68,22 @@ def get_origin(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _same_origin(base_url: str, candidate_url: str) -> bool:
+    base = urlparse(str(base_url or ""))
+    candidate = urlparse(str(candidate_url or ""))
+    if not base.scheme or not candidate.scheme:
+        return False
+    if base.scheme != candidate.scheme:
+        return False
+    if base.hostname != candidate.hostname:
+        return False
+    base_port = base.port or (443 if base.scheme == "https" else 80)
+    candidate_port = candidate.port or (443 if candidate.scheme == "https" else 80)
+    return base_port == candidate_port
+
+
 def same_domain(origin: str, url: str) -> bool:
-    return urlparse(origin).netloc == urlparse(url).netloc
+    return _same_origin(origin, url)
 
 
 def get_title(html: str) -> str:
@@ -432,7 +446,7 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
             pages_by_final_url[final_url] = page
 
     for url in candidate_urls:
-        if not same_domain(origin, url):
+        if not _same_origin(base_url, url):
             continue
 
         parsed_url = urlparse(url)

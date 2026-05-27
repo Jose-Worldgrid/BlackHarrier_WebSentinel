@@ -31,7 +31,17 @@ def _looks_like_api_endpoint(value: str) -> bool:
 
 
 def _same_host(url_a: str, url_b: str) -> bool:
-    return urlparse(str(url_a or "")).netloc == urlparse(str(url_b or "")).netloc
+    parsed_a = urlparse(str(url_a or ""))
+    parsed_b = urlparse(str(url_b or ""))
+    if not parsed_a.scheme or not parsed_b.scheme:
+        return False
+    if parsed_a.scheme != parsed_b.scheme:
+        return False
+    if parsed_a.hostname != parsed_b.hostname:
+        return False
+    port_a = parsed_a.port or (443 if parsed_a.scheme == "https" else 80)
+    port_b = parsed_b.port or (443 if parsed_b.scheme == "https" else 80)
+    return port_a == port_b
 
 
 def _add_endpoint(found: dict, endpoint: str, source: str):
@@ -39,6 +49,16 @@ def _add_endpoint(found: dict, endpoint: str, source: str):
     if not normalized:
         return
     found[normalized].add(source)
+
+
+def _add_endpoint_if_in_scope(found: dict, page_url: str, endpoint: str, source: str):
+    normalized = str(endpoint or "").strip()
+    if not normalized:
+        return
+    candidate = urljoin(page_url, normalized)
+    if not _same_host(page_url, candidate):
+        return
+    _add_endpoint(found, candidate, source)
 
 
 def _extract_from_html(page_url: str, html: str, found: dict, js_candidates: set):
@@ -57,7 +77,7 @@ def _extract_from_html(page_url: str, html: str, found: dict, js_candidates: set
         for raw in candidates:
             absolute = urljoin(page_url, raw)
             if _looks_like_api_endpoint(absolute):
-                _add_endpoint(found, absolute, "html-link")
+                _add_endpoint_if_in_scope(found, page_url, absolute, "html-link")
 
             if absolute.lower().endswith(".js") and _same_host(page_url, absolute):
                 js_candidates.add(absolute)
@@ -67,20 +87,21 @@ def _extract_from_text_blob(page_url: str, text: str, found: dict):
     for match in ENDPOINT_REGEX.findall(str(text or "")):
         candidate = urljoin(page_url, match)
         if _looks_like_api_endpoint(candidate):
-            _add_endpoint(found, candidate, "html-js-snippet")
+            _add_endpoint_if_in_scope(found, page_url, candidate, "html-js-snippet")
 
 
 def _extract_from_runtime(page: dict, found: dict):
+    page_url = str(page.get("final_url") or page.get("url") or "")
     runtime = page.get("browser_runtime") or {}
 
     for endpoint in runtime.get("candidate_endpoints") or []:
         if _looks_like_api_endpoint(endpoint):
-            _add_endpoint(found, endpoint, "runtime-candidate")
+            _add_endpoint_if_in_scope(found, page_url, endpoint, "runtime-candidate")
 
     for event in runtime.get("network_events") or []:
         endpoint = str(event.get("url") or "")
         if _looks_like_api_endpoint(endpoint):
-            _add_endpoint(found, endpoint, "runtime-network")
+            _add_endpoint_if_in_scope(found, page_url, endpoint, "runtime-network")
 
 
 def _extract_from_pages(pages, found: dict, js_candidates: set):
