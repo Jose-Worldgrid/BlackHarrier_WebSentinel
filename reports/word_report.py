@@ -1,5 +1,6 @@
 from collections import Counter, defaultdict
 from datetime import datetime
+import json
 import os
 import re
 
@@ -528,6 +529,225 @@ def sort_results(results):
     )
 
 
+def _business_likelihood(item: dict) -> str:
+    status = safe_text(item.get("Resultado", "")).lower()
+    conf = item.get("Confianza", 0)
+    try:
+        conf = float(conf or 0)
+    except Exception:
+        conf = 0.0
+    if status == "hallazgo" or conf >= 0.8:
+        return "Alta"
+    if status == "posible hallazgo" or conf >= 0.55:
+        return "Media"
+    return "Baja"
+
+
+def _business_impact(item: dict) -> str:
+    sev = safe_text(item.get("Severidad", ""))
+    if sev in {"Crítica", "Alta"}:
+        return "Alto"
+    if sev == "Media":
+        return "Medio"
+    return "Bajo"
+
+
+def _business_risk(probability: str, impact: str) -> str:
+    matrix = {
+        ("Alta", "Alto"): "Crítico",
+        ("Alta", "Medio"): "Alto",
+        ("Alta", "Bajo"): "Medio",
+        ("Media", "Alto"): "Alto",
+        ("Media", "Medio"): "Medio",
+        ("Media", "Bajo"): "Bajo",
+        ("Baja", "Alto"): "Medio",
+        ("Baja", "Medio"): "Bajo",
+        ("Baja", "Bajo"): "Bajo",
+    }
+    return matrix.get((probability, impact), "Bajo")
+
+
+def add_business_risk_matrix(document, findings):
+    document.add_heading("5.1 Matriz de riesgo de negocio (Probabilidad x Impacto)", 2)
+
+    if not findings:
+        document.add_paragraph("Sin hallazgos priorizados para construir matriz de riesgo de negocio.")
+        return
+
+    table = document.add_table(rows=1, cols=6)
+    table.style = "Table Grid"
+    headers = ["Control", "Módulo", "Sev.", "Probabilidad", "Impacto", "Riesgo negocio"]
+    for i, h in enumerate(headers):
+        table.rows[0].cells[i].text = h
+    style_header_row(table.rows[0])
+
+    for item in _prioritized_findings(findings, limit=10):
+        probability = _business_likelihood(item)
+        impact = _business_impact(item)
+        risk = _business_risk(probability, impact)
+
+        row = table.add_row().cells
+        row[0].text = truncate(item.get("Control", ""), 95)
+        row[1].text = truncate(item.get("Módulo", ""), 45)
+        row[2].text = safe_text(item.get("Severidad", ""))
+        row[3].text = probability
+        row[4].text = impact
+        row[5].text = risk
+
+
+def add_compliance_mapping(document, findings):
+    document.add_heading("5.2 Mapeo de cumplimiento (OWASP/NIST/ISO/GDPR)", 2)
+
+    if not findings:
+        document.add_paragraph("Sin hallazgos para mapear a marcos de cumplimiento.")
+        return
+
+    mappings = []
+    seen = set()
+    for item in findings:
+        module = safe_text(item.get("Módulo", ""))
+        control = safe_text(item.get("Control", "")).lower()
+        sev = safe_text(item.get("Severidad", ""))
+
+        refs = []
+        if any(k in control for k in ["strict-transport-security", "hsts", "ftp", "tls", "http alternativo"]):
+            refs.append("GDPR Art.32 (confidencialidad/cifrado)")
+            refs.append("ISO27001 A.8.24 / A.8.25")
+            refs.append("NIST PR.DS-2")
+        if any(k in control for k in ["content-security-policy", "x-frame-options", "x-content-type-options", "cabecera"]):
+            refs.append("OWASP ASVS V14 (configuración segura)")
+            refs.append("NIST PR.IP-1")
+        if module in {"Control de acceso", "JWT", "Autenticación"}:
+            refs.append("OWASP API Top 10 - API1/API2")
+            refs.append("ISO27001 A.5.15 / A.8.2")
+        if module in {"SQL Injection", "XSS reflejado", "SSTI", "Path Traversal", "SSRF"}:
+            refs.append("OWASP Top 10 A03/A05")
+            refs.append("NIST SI-10")
+
+        if not refs:
+            continue
+
+        key = (module, control)
+        if key in seen:
+            continue
+        seen.add(key)
+        mappings.append({
+            "control": truncate(item.get("Control", ""), 120),
+            "module": module,
+            "severity": sev,
+            "refs": "; ".join(sorted(set(refs))),
+        })
+
+    if not mappings:
+        document.add_paragraph("No se generaron mapeos normativos automáticos en esta ejecución.")
+        return
+
+    table = document.add_table(rows=1, cols=4)
+    table.style = "Table Grid"
+    headers = ["Control", "Módulo", "Sev.", "Referencias normativas"]
+    for i, h in enumerate(headers):
+        table.rows[0].cells[i].text = h
+    style_header_row(table.rows[0])
+
+    for row_data in mappings[:12]:
+        row = table.add_row().cells
+        row[0].text = row_data["control"]
+        row[1].text = row_data["module"]
+        row[2].text = row_data["severity"]
+        row[3].text = row_data["refs"]
+
+
+def add_manual_offensive_backlog(document, findings, pages, assets):
+    document.add_heading("5.3 Backlog ofensivo manual pendiente", 2)
+    document.add_paragraph(
+        "Pruebas manuales prioritarias para cerrar brecha entre reconocimiento automatizado y auditoría ofensiva completa."
+    )
+
+    backlog = []
+    auth_pages = [p for p in pages or [] if safe_text(p.get("classification", "")).lower() in {"auth", "registration", "protected", "admin_candidate"}]
+    if auth_pages:
+        backlog.append("Validar BOLA/IDOR por rol en rutas post-login (acceso cruzado entre entidades/usuarios).")
+        backlog.append("Validar manipulación de sesión/JWT (claims, expiración, firma, replay y privilegios).")
+
+    sensitive_forms = any(get_form_detection_summary(p).get("forms_count", 0) > 0 for p in (pages or []))
+    if sensitive_forms:
+        backlog.append("Ejecutar pruebas manuales en formularios dinámicos (SQLi/XSS/CSRF) con variaciones de contexto.")
+
+    ports = {int(p.get("port", 0) or 0) for p in (assets.get("ports") or []) if str(p.get("port", "")).isdigit()}
+    if 21 in ports:
+        backlog.append("Comprobar manualmente FTP: acceso anónimo, cifrado real, exposición de credenciales y hardening de servicio.")
+    if 8080 in ports:
+        backlog.append("Auditar manualmente servicio en 8080: paneles admin, APIs no documentadas y controles de autenticación.")
+
+    if not backlog:
+        backlog.append("No se detectaron prerrequisitos claros de explotación manual; revisar alcance y profundidad de crawling autenticado.")
+
+    for item in backlog[:8]:
+        document.add_paragraph(item, style="List Bullet")
+
+
+def add_defensive_playbook(document, assets, findings):
+    document.add_heading("5.4 Playbook defensivo técnico (acción inmediata)", 2)
+
+    techs = {safe_text(t.get("tech", "")).lower() for t in (assets.get("technologies") or [])}
+    controls = " ".join(safe_text(f.get("Control", "")).lower() for f in (findings or []))
+
+    has_header_gaps = any(k in controls for k in [
+        "content-security-policy",
+        "strict-transport-security",
+        "x-content-type-options",
+        "x-frame-options",
+    ])
+
+    if has_header_gaps or "nginx" in techs:
+        document.add_paragraph("Nginx hardening recomendado:", style="List Bullet")
+        document.add_paragraph(
+            "add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\" always;\n"
+            "add_header X-Frame-Options \"SAMEORIGIN\" always;\n"
+            "add_header X-Content-Type-Options \"nosniff\" always;\n"
+            "add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;\n"
+            "server_tokens off;"
+        )
+
+    if has_header_gaps or "nextjs" in techs or "next.js" in techs:
+        document.add_paragraph("Next.js CSP base sugerida (ajustar dominios permitidos):", style="List Bullet")
+        document.add_paragraph(
+            "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https:; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; "
+            "font-src 'self' data:; frame-ancestors 'none'; base-uri 'self';"
+        )
+
+    document.add_paragraph("Defensa en capas recomendada:", style="List Bullet")
+    document.add_paragraph(
+        "Aplicar rate-limiting en /login y /registro, WAF/CDN con reglas anti-bot y geoblocking según exposición, "
+        "y segmentación de puertos administrativos fuera de Internet pública."
+    )
+
+
+def _version_anomaly_notes(technologies: list) -> list:
+    notes = []
+    for tech in technologies or []:
+        name = safe_text(tech.get("tech")).strip().lower()
+        version = safe_text(tech.get("version")).strip()
+        if not name or not version:
+            continue
+
+        parts = version.split(".")
+        try:
+            major = int(parts[0]) if parts else 0
+            minor = int(parts[1]) if len(parts) > 1 else 0
+        except Exception:
+            continue
+
+        # Conservative heuristic: alert when banner version looks implausibly ahead.
+        if name == "nginx" and (major > 1 or (major == 1 and minor >= 29)):
+            notes.append(
+                f"Versión reportada potencialmente anómala para {name}/{version}: validar posible banner spoofing, proxy intermedio o identificación errónea."
+            )
+
+    return notes
+
+
 def _extract_url_hint(text: str) -> str:
     value = safe_text(text)
 
@@ -867,6 +1087,10 @@ def add_sensitive_assets_section(document, assets: dict):
             row[1].text = t.get("version", "")
             row[2].text = t.get("source", "")
 
+        anomaly_notes = _version_anomaly_notes(techs)
+        for note in anomaly_notes[:3]:
+            document.add_paragraph(note, style="List Bullet")
+
     # ── Users/Emails ──────────────────────────────────────────────────
     users = assets.get("users") or []
     if users:
@@ -968,6 +1192,215 @@ def add_summary_table(document, findings, errors, oks):
         row = table.add_row().cells
         row[0].text = name
         row[1].text = str(count)
+
+
+def _extract_candidate_targets_from_results(results: list) -> list:
+    candidates = []
+    for row in results or []:
+        control = safe_text(row.get("Control", "")).lower()
+        if "objetivos candidatos priorizados" not in control:
+            continue
+        evidence = safe_text(row.get("Evidencia", "")).strip()
+        if not evidence:
+            continue
+        try:
+            parsed = json.loads(evidence)
+        except Exception:
+            continue
+        if isinstance(parsed, list):
+            candidates.extend([x for x in parsed if isinstance(x, dict)])
+    return candidates
+
+
+def _estimate_remediation_effort(findings: list, assets: dict) -> str:
+    crit = len([x for x in findings if safe_text(x.get("Severidad")) == "Crítica"])
+    high = len([x for x in findings if safe_text(x.get("Severidad")) == "Alta"])
+    exposed_ports = len([x for x in (assets.get("ports") or []) if safe_text(x.get("severity")) in {"Alta", "Media"}])
+    if crit > 0 or high >= 8 or exposed_ports >= 6:
+        return "Medio-Alto"
+    if high >= 3 or exposed_ports >= 3:
+        return "Medio"
+    return "Bajo-Medio"
+
+
+def add_c_level_one_page_summary(document, target_url, findings, errors, assets, deduped_results):
+    document.add_heading("1.1 Resumen Ejecutivo C-Level (1 página)", 2)
+
+    high_count = len([x for x in findings if safe_text(x.get("Severidad")) in {"Crítica", "Alta"}])
+    medium_count = len([x for x in findings if safe_text(x.get("Severidad")) == "Media"])
+    risky_ports = sorted({int(p.get("port", 0) or 0) for p in (assets.get("ports") or []) if safe_text(p.get("severity")) in {"Alta", "Media"}})
+    candidate_targets = _extract_candidate_targets_from_results(deduped_results)
+    effort = _estimate_remediation_effort(findings, assets)
+
+    risk_level = "Medio"
+    if high_count >= 6:
+        risk_level = "Alto"
+    elif high_count <= 1 and medium_count <= 2:
+        risk_level = "Bajo-Medio"
+
+    document.add_paragraph(
+        f"El estado de seguridad actual de {target_url} presenta un riesgo {risk_level} para continuidad y confidencialidad, "
+        "con superficie expuesta en capas de infraestructura y aplicación que requiere remediación priorizada."
+    )
+
+    kpi = document.add_table(rows=1, cols=5)
+    kpi.style = "Table Grid"
+    headers = ["Riesgo global", "Hallazgos Altos/Críticos", "Hallazgos Medios", "Errores ejecución", "Esfuerzo remediación"]
+    for i, h in enumerate(headers):
+        kpi.rows[0].cells[i].text = h
+    style_header_row(kpi.rows[0])
+
+    row = kpi.add_row().cells
+    row[0].text = risk_level
+    row[1].text = str(high_count)
+    row[2].text = str(medium_count)
+    row[3].text = str(len(errors))
+    row[4].text = effort
+
+    document.add_paragraph("Impacto de negocio potencial:")
+    document.add_paragraph(
+        "Exposición de servicios y configuraciones de seguridad insuficientes pueden habilitar fuga de credenciales, "
+        "interrupción del servicio y aumento de superficie de ataque.",
+        style="List Bullet",
+    )
+    if risky_ports:
+        document.add_paragraph(
+            f"Puertos con riesgo operativo observado: {', '.join(str(p) for p in risky_ports[:8])}.",
+            style="List Bullet",
+        )
+    if candidate_targets:
+        top = sorted(candidate_targets, key=lambda x: float(x.get("priority_score", 0) or 0), reverse=True)[:3]
+        compact = " | ".join(
+            f"{safe_text(x.get('target'))} (score {safe_text(x.get('priority_score'))})"
+            for x in top
+        )
+        document.add_paragraph(
+            f"Activos prioritarios para mitigación inmediata: {compact}",
+            style="List Bullet",
+        )
+
+    document.add_paragraph("Decisiones ejecutivas recomendadas (30-60 días):")
+    document.add_paragraph("Bloquear exposición innecesaria de servicios y paneles administrativos desde Internet.", style="List Number")
+    document.add_paragraph("Aplicar baseline obligatorio de cabeceras y cifrado TLS en todos los frontales web.", style="List Number")
+    document.add_paragraph("Completar validación ofensiva manual sobre autenticación, sesión y control de acceso por roles.", style="List Number")
+
+
+def _asset_row_score(base_score: float, sev: str, kind: str) -> float:
+    sev_bonus = {
+        "Crítica": 35,
+        "Alta": 25,
+        "Media": 15,
+        "Baja": 8,
+        "Informativa": 3,
+    }.get(sev, 5)
+    kind_bonus = {
+        "port": 20,
+        "endpoint": 16,
+        "candidate": 14,
+        "identity": 10,
+    }.get(kind, 8)
+    return max(0.0, min(base_score + sev_bonus + kind_bonus, 100.0))
+
+
+def build_asset_risk_register(findings: list, assets: dict, results: list) -> list:
+    rows = []
+
+    for p in assets.get("ports") or []:
+        port = int(p.get("port", 0) or 0)
+        sev = "Alta" if safe_text(p.get("severity")) == "Alta" else "Media"
+        score = _asset_row_score(35, sev, "port")
+        rows.append({
+            "asset": f"Port {port}",
+            "kind": "Servicio de red",
+            "severity": sev,
+            "score": round(score, 1),
+            "reason": safe_text(p.get("banner", "")) or "Puerto expuesto con necesidad de hardening.",
+            "action": "Restringir exposición por firewall/ACL, validar autenticación y parcheo.",
+        })
+
+    for ep in (assets.get("api_endpoints") or [])[:10]:
+        score = _asset_row_score(32, "Media", "endpoint")
+        rows.append({
+            "asset": truncate(ep, 90),
+            "kind": "Endpoint/API",
+            "severity": "Media",
+            "score": round(score, 1),
+            "reason": "Endpoint descubierto con potencial exposición funcional.",
+            "action": "Validar authN/authZ por recurso, rate-limit y validación de entrada.",
+        })
+
+    for path in (assets.get("sensitive_paths") or [])[:10]:
+        score = _asset_row_score(38, "Media", "endpoint")
+        rows.append({
+            "asset": truncate(path, 90),
+            "kind": "Ruta sensible",
+            "severity": "Media",
+            "score": round(score, 1),
+            "reason": "Ruta sensible identificada en discovery/crawling.",
+            "action": "Aplicar control de acceso estricto y ocultar rutas administrativas no públicas.",
+        })
+
+    for user in (assets.get("users") or [])[:6]:
+        score = _asset_row_score(28, "Baja", "identity")
+        rows.append({
+            "asset": user,
+            "kind": "Identidad expuesta",
+            "severity": "Baja",
+            "score": round(score, 1),
+            "reason": "Identificador de usuario/correo observado en respuestas.",
+            "action": "Reducir exposición de PII y aplicar minimización de datos en respuestas.",
+        })
+
+    for c in _extract_candidate_targets_from_results(results)[:12]:
+        base = float(c.get("priority_score", 0) or 0) * 7.5
+        sev = "Alta" if float(c.get("priority_score", 0) or 0) >= 8 else "Media"
+        score = _asset_row_score(base, sev, "candidate")
+        rows.append({
+            "asset": safe_text(c.get("target", "")),
+            "kind": safe_text(c.get("kind", "Candidato")),
+            "severity": sev,
+            "score": round(score, 1),
+            "reason": safe_text(c.get("reason", "")) or "Activo priorizado por correlación ofensiva.",
+            "action": "Validar alcance legal y ejecutar hardening/remediación priorizada por impacto.",
+        })
+
+    # Collapse duplicates by asset+kind keeping highest score.
+    dedup = {}
+    for row in rows:
+        key = (safe_text(row.get("asset", "")).lower(), safe_text(row.get("kind", "")).lower())
+        current = dedup.get(key)
+        if not current or float(row.get("score", 0) or 0) > float(current.get("score", 0) or 0):
+            dedup[key] = row
+
+    final_rows = sorted(dedup.values(), key=lambda x: float(x.get("score", 0) or 0), reverse=True)
+    return final_rows[:16]
+
+
+def add_asset_risk_scoring_section(document, findings, assets, results):
+    document.add_heading("5.5 Priorización por activo (score 0-100)", 2)
+
+    risk_rows = build_asset_risk_register(findings, assets, results)
+    if not risk_rows:
+        document.add_paragraph("No se pudo construir scoring por activo con la evidencia disponible.")
+        return
+
+    table = document.add_table(rows=1, cols=6)
+    table.style = "Table Grid"
+    headers = ["Activo", "Tipo", "Sev.", "Score", "Motivo", "Acción recomendada"]
+    for i, h in enumerate(headers):
+        table.rows[0].cells[i].text = h
+    style_header_row(table.rows[0])
+
+    for entry in risk_rows:
+        row = table.add_row().cells
+        row[0].text = truncate(entry.get("asset", ""), 80)
+        row[1].text = truncate(entry.get("kind", ""), 35)
+        sev = safe_text(entry.get("severity", "Media"))
+        row[2].text = sev
+        row[3].text = str(entry.get("score", ""))
+        row[4].text = truncate(entry.get("reason", ""), 140)
+        row[5].text = truncate(entry.get("action", ""), 160)
+        style_severity_cell(row[2], sev)
 
 
 def add_severity_table(document, findings):
@@ -1816,6 +2249,7 @@ def generate_word_report(
 
     add_summary_table(document, findings, errors, oks)
     add_severity_table(document, findings)
+    add_c_level_one_page_summary(document, target_url, findings, errors, assets, deduped_results)
 
     # ── Section 2: Sensitive assets ───────────────────────────────────
     add_sensitive_assets_section(document, assets)
@@ -1831,6 +2265,11 @@ def generate_word_report(
 
     # ── Section 5: Top findings ───────────────────────────────────────
     add_top_findings_table(document, findings)
+    add_business_risk_matrix(document, findings)
+    add_compliance_mapping(document, findings)
+    add_manual_offensive_backlog(document, findings, pages, assets)
+    add_defensive_playbook(document, assets, findings)
+    add_asset_risk_scoring_section(document, findings, assets, deduped_results)
 
     # ── Section 6: Execution errors / limitations ────────────────────
     add_execution_errors_table(document, errors)

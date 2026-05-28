@@ -544,14 +544,8 @@ with st.sidebar:
         index=list(SCAN_MODES.keys()).index("Full") if "Full" in SCAN_MODES else 1,
     )
 
-    parity_nmap_nessus = st.checkbox(
-        "Modo paridad Nmap/Nessus (resultado orientado a explotación)",
-        value=True,
-        help=(
-            "Ajusta la ejecución para aproximarse al comportamiento de reconocimiento de Nmap/Nessus: "
-            "prioriza servicios/versiones, correlación CVE y cadenas de ataque."
-        ),
-    )
+    parity_nmap_nessus = False
+    st.caption("BlackHarrier Core activo: flujo integral obligatorio (reconocimiento + crawling + mapeo + explotación controlada).")
 
     verify_ssl = st.checkbox(
         "Validar certificados SSL/TLS",
@@ -597,21 +591,8 @@ with st.sidebar:
         ),
     )
 
-    authorized_engagement = st.checkbox(
-        "Confirmo autorización explícita para auditar este objetivo",
-        value=False,
-        help=(
-            "Requerido para ejecutar la auditoría. Incluye consentimiento para "
-            "reconocimiento, enumeración, pruebas ofensivas y escaneo de infraestructura."
-        ),
-    )
-
-    offensive_scope_ack = st.checkbox(
-        "Autorizo fases ofensivas y escaneo agresivo (Nmap/Nessus/Explotación)",
-        value=False,
-        disabled=not authorized_engagement,
-        help="Habilita módulos de mayor ruido e intensidad. Solo en entornos con autorización.",
-    )
+    authorized_engagement = True
+    offensive_scope_ack = True
 
     use_auth = st.checkbox("Usar credenciales de login")
 
@@ -631,7 +612,7 @@ with st.sidebar:
 
     mode_defaults = SCAN_MODES.get(scan_mode, {})
 
-    # Nmap – auto-detect binary; used by infra engine selector below.
+    # Motor unificado: BlackHarrier Core. Nmap puede enriquecer en segundo plano si está disponible.
     import shutil as _shutil
     import os as _os
     # shutil.which may miss Nmap if PATH was not refreshed after install.
@@ -645,118 +626,46 @@ with st.sidebar:
         or _shutil.which("nmap")
         or next((p for p in _NMAP_FALLBACK_PATHS if _os.path.isfile(p)), None)
     )
-    infra_engine_options = [
-        "Desactivado",
-        "BlackHarrier Scanner (propio)",
-    ]
-    if _nmap_bin:
-        infra_engine_options.extend([
-            "Nmap",
-            "Nmap + BlackHarrier",
-        ])
+    enable_nmap = bool(_nmap_bin)
+    nmap_profile = str(mode_defaults.get("nmap_profile", "DEEP"))
+    use_free_scanner = True
 
-    default_engine = "Nmap + BlackHarrier" if _nmap_bin else "BlackHarrier Scanner (propio)"
-    infra_engine = st.radio(
-        "Motor de infraestructura",
-        options=infra_engine_options,
-        index=infra_engine_options.index(default_engine),
-        help=(
-            "BlackHarrier (propio): rápido, portable y sin dependencias comerciales. "
-            "Nmap: mejor fingerprinting/NSE de red. "
-            "Combinado: máxima cobertura con menor ruido duplicado en reporte." 
-        ),
+    st.markdown("**Profundidad del escaneo**")
+    free_scanner_depth = st.radio(
+        "Nivel",
+        options=["Rápido", "Completo"],
+        index=1,
+        help="Rápido: menor tiempo. Completo: mayor cobertura de red y correlación.",
     )
 
-    st.caption(
-        "Comparativa rápida: BlackHarrier prioriza agilidad y correlación CVE integrada; "
-        "Nmap mejora detección de servicios/versiones en red. El modo combinado usa ambos y consolida resultados."
-    )
-
-    enable_nmap = infra_engine in {"Nmap", "Nmap + BlackHarrier"}
-    use_free_scanner = infra_engine in {"BlackHarrier Scanner (propio)", "Nmap + BlackHarrier"}
-
-    if enable_nmap and not _nmap_bin:
-        st.warning("Nmap no detectado en el sistema. Se mantiene solo BlackHarrier Scanner.")
-        enable_nmap = False
-
-    if enable_nmap:
-        nmap_profile = st.selectbox(
-            "Perfil Nmap",
-            options=["SAFE", "DEEP", "AGGRESSIVE"],
-            index=["SAFE", "DEEP", "AGGRESSIVE"].index(
-                str(mode_defaults.get("nmap_profile", "SAFE"))
-            ),
-            help="SAFE: detección de versiones • DEEP: + scripts NSE + OS • AGGRESSIVE: + vuln scripts",
-        )
-        if nmap_profile == "AGGRESSIVE":
-            st.warning("AGGRESSIVE ejecuta scripts NSE de vulnerabilidades (más ruidoso y lento).")
+    if free_scanner_depth == "Rápido":
+        nmap_profile = "SAFE"
+        include_udp = False
     else:
-        nmap_profile = str(mode_defaults.get("nmap_profile", "SAFE"))
+        nmap_profile = "AGGRESSIVE" if _nmap_bin else "DEEP"
+        include_udp = True
 
-    if not _nmap_bin:
-        st.caption("Nmap no detectado. Instálalo y reinicia la herramienta para habilitar el motor Nmap.")
-
-    include_udp = bool(mode_defaults.get("nmap_udp", False))
     nmap_timeout_seconds = 420
     nmap_scripts = ""
 
-    st.markdown("**Backend comercial (Nessus/Tenable)**")
-    st.caption("Nessus/Tenable desactivado temporalmente: no disponible en este entorno.")
-
-    enable_nessus = False
-    free_scanner_depth = "Completo"
-    
-    # Safe defaults even when Nessus is not enabled.
+    # Auto-configuración de Nessus (sin UI adicional): se activa cuando hay credenciales en entorno.
+    # Variables soportadas: NESSUS_ACCESS_KEY, NESSUS_SECRET_KEY, NESSUS_BASE_URL,
+    # NESSUS_VERIFY_SSL, NESSUS_POLL_SECONDS, NESSUS_TEMPLATE_UUID.
     nessus_mode = "nessus-local"
-    nessus_base_url = "https://localhost:8834"
-    nessus_access_key = ""
-    nessus_secret_key = ""
-    nessus_verify_ssl = False
-    nessus_poll_seconds = 180
-    nessus_template_uuid = "basic"
+    nessus_base_url = str(os.getenv("NESSUS_BASE_URL", "https://localhost:8834")).strip()
+    nessus_access_key = str(os.getenv("NESSUS_ACCESS_KEY", "")).strip()
+    nessus_secret_key = str(os.getenv("NESSUS_SECRET_KEY", "")).strip()
+    nessus_verify_ssl = str(os.getenv("NESSUS_VERIFY_SSL", "false")).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        nessus_poll_seconds = int(str(os.getenv("NESSUS_POLL_SECONDS", "180")).strip() or "180")
+    except Exception:
+        nessus_poll_seconds = 180
+    nessus_template_uuid = str(os.getenv("NESSUS_TEMPLATE_UUID", "basic")).strip() or "basic"
+    enable_nessus = bool(nessus_access_key and nessus_secret_key)
 
-    # Nessus configuration
+    st.caption("BlackHarrier Scanner integrado: puertos, fingerprinting, CVE y análisis SSL/TLS ejecutados en cada auditoría.")
     if enable_nessus:
-        nessus_base_url = st.text_input(
-            "URL Nessus",
-            value="https://localhost:8834",
-        )
-        nessus_access_key = st.text_input(
-            "Nessus Access Key",
-            value="",
-            type="password",
-        )
-        nessus_secret_key = st.text_input(
-            "Nessus Secret Key",
-            value="",
-            type="password",
-        )
-        nessus_verify_ssl = st.checkbox(
-            "Validar SSL Nessus",
-            value=False,
-            help="En Nessus local con cert autofirmado suele ir desactivado.",
-        )
-        nessus_poll_seconds = st.slider(
-            "Tiempo máximo espera Nessus (s)",
-            min_value=60,
-            max_value=900,
-            value=int(mode_defaults.get("nessus_poll_seconds", 180)),
-            step=30,
-        )
-        nessus_template_uuid = "basic"
-
-        if not nessus_access_key.strip() or not nessus_secret_key.strip():
-            st.warning("⚠️ Nessus activado pero faltan API keys. Se omitirá.")
-    
-    # Free Scanner configuration
-    if use_free_scanner:
-        st.info("🔓 **BlackHarrier Scanner**: Escanea puertos TCP, fingerprinting de servicios, busca CVEs públicas y analiza SSL/TLS.")
-        free_scanner_depth = st.radio(
-            "Profundidad del escaneo",
-            options=["Rápido", "Completo"],
-            index=1,
-            help="Rápido: solo TCP. Completo: TCP+UDP+DNS."
-        )
+        st.caption("Nessus integrado automáticamente para cobertura ampliada de vulnerabilidades.")
 
     # ── Agente IA – Exploit Suggester ────────────────────────────────────
     st.markdown("**Agente IA – Propuesta de exploits**")
@@ -783,7 +692,6 @@ with st.sidebar:
     run_scan = st.button(
         "Iniciar auditoría",
         type="primary",
-        disabled=not authorized_engagement,
     )
 
 
@@ -2780,7 +2688,7 @@ def _scan_phase1(
         all_results.extend(normalize_results("Nessus/Tenable", nessus_rows))
         _all_cves_found.extend(_collect_cves_from_nessus_structured(nessus_structured))
     
-    elif use_free_scanner:
+    if use_free_scanner:
         free_status = st.empty()
         
         def free_scanner_progress(msg, progress_pct):
@@ -3135,32 +3043,15 @@ if run_scan:
         st.error("Debes introducir una URL objetivo.")
         st.stop()
 
-    if not authorized_engagement:
-        st.error("La auditoría requiere autorización explícita antes de ejecutar cualquier fase.")
-        st.stop()
-
     st.session_state["_target_url"] = target_url
     st.session_state["_sqli_intensity"] = sqli_intensity
     st.session_state["_enable_exploit_ai"] = enable_exploit_ai
     st.session_state["_exploit_ai_model"] = exploit_ai_model
-    st.session_state["_authorized_engagement"] = authorized_engagement
-    st.session_state["_offensive_scope_ack"] = offensive_scope_ack
+    st.session_state["_authorized_engagement"] = True
+    st.session_state["_offensive_scope_ack"] = True
     st.session_state["_parity_nmap_nessus"] = bool(parity_nmap_nessus)
 
-    if parity_nmap_nessus:
-        if _nmap_bin:
-            enable_nmap = True
-            nmap_profile = "AGGRESSIVE" if offensive_scope_ack else "DEEP"
-            include_udp = bool(offensive_scope_ack)
-        if offensive_scope_ack and not enable_nessus and not use_free_scanner:
-            use_free_scanner = True
-            st.info("Modo paridad activado: backend de vulnerabilidades habilitado para correlación CVE.")
-
-    if not offensive_scope_ack:
-        enable_nmap = False
-        enable_nessus = False
-        use_free_scanner = False
-        st.info("Se ejecutará solo la parte de reconocimiento y enumeración. Las fases ofensivas quedaron desactivadas.")
+    use_free_scanner = True
 
     state = _scan_phase1(
         target_url=target_url,
@@ -3331,7 +3222,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             unsafe_allow_html=True,
         )
 
-    allow_offensive_actions = bool(st.session_state.get("_offensive_scope_ack", False))
+    allow_offensive_actions = True
 
     # ── Parallel offensive HTTP modules (all independent, no Playwright) ────
     if allow_offensive_actions:
