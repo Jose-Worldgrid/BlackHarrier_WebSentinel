@@ -28,7 +28,7 @@ SCAN_MODES = {
         "aggressive": True,
         "port_scan_profile": "deep",
         "vuln_correlation_profile": "deep",
-        "nmap_profile": "AGGRESSIVE",
+        "nmap_profile": "KALI_FULL",
         "nmap_udp": True,
         "nessus_poll_seconds": 300,
     },
@@ -58,7 +58,7 @@ SCAN_MODES = {
         "aggressive": True,
         "port_scan_profile": "deep",
         "vuln_correlation_profile": "deep",
-        "nmap_profile": "AGGRESSIVE",
+        "nmap_profile": "KALI_FULL",
         "nmap_udp": True,
         "nessus_poll_seconds": 300,
     }

@@ -31,6 +31,98 @@ class CVELookup:
     }
 
     CACHE_TTL_SECONDS = 24 * 3600
+
+    @staticmethod
+    def _normalize_version_tokens(version: str) -> List[int]:
+        parts = re.findall(r"\d+", str(version or ""))
+        return [int(x) for x in parts[:6]] if parts else []
+
+    @classmethod
+    def _compare_versions(cls, left: str, right: str) -> int:
+        """Return -1 if left<right, 0 if equal, 1 if left>right (numeric token comparison)."""
+        ltok = cls._normalize_version_tokens(left)
+        rtok = cls._normalize_version_tokens(right)
+        if not ltok and not rtok:
+            return 0
+        max_len = max(len(ltok), len(rtok))
+        ltok.extend([0] * (max_len - len(ltok)))
+        rtok.extend([0] * (max_len - len(rtok)))
+        for lv, rv in zip(ltok, rtok):
+            if lv < rv:
+                return -1
+            if lv > rv:
+                return 1
+        return 0
+
+    @classmethod
+    def _version_within_bounds(cls, version: str, cpe_match: Dict) -> bool:
+        if not version:
+            return True
+
+        v = str(version or "").strip()
+        if not v:
+            return True
+
+        start_inc = str(cpe_match.get("versionStartIncluding") or "").strip()
+        start_exc = str(cpe_match.get("versionStartExcluding") or "").strip()
+        end_inc = str(cpe_match.get("versionEndIncluding") or "").strip()
+        end_exc = str(cpe_match.get("versionEndExcluding") or "").strip()
+
+        if start_inc and cls._compare_versions(v, start_inc) < 0:
+            return False
+        if start_exc and cls._compare_versions(v, start_exc) <= 0:
+            return False
+        if end_inc and cls._compare_versions(v, end_inc) > 0:
+            return False
+        if end_exc and cls._compare_versions(v, end_exc) >= 0:
+            return False
+
+        criteria = str(cpe_match.get("criteria") or "")
+        if criteria and v and f":{v}:" in criteria:
+            return True
+
+        # If no explicit bounds exist, keep as potentially relevant.
+        if not any([start_inc, start_exc, end_inc, end_exc]):
+            return True
+
+        return True
+
+    @classmethod
+    def _likely_affected_by_nvd_config(cls, cve_data: Dict, version: Optional[str]) -> bool:
+        if not version:
+            return True
+
+        configurations = cve_data.get("configurations") or []
+        if not isinstance(configurations, list):
+            return True
+
+        saw_match = False
+        for cfg in configurations:
+            nodes = cfg.get("nodes") or []
+            for node in nodes:
+                for cpe_match in (node.get("cpeMatch") or []):
+                    if not isinstance(cpe_match, dict):
+                        continue
+                    if cpe_match.get("vulnerable") is False:
+                        continue
+                    saw_match = True
+                    if cls._version_within_bounds(str(version or ""), cpe_match):
+                        return True
+
+        # If NVD didn't provide cpeMatch blocks, don't hard-discard.
+        return not saw_match
+
+    @staticmethod
+    def _extract_reference_urls(cve_data: Dict) -> List[str]:
+        urls = []
+        for ref in cve_data.get("references") or []:
+            if isinstance(ref, dict):
+                url = str(ref.get("url") or "").strip()
+            else:
+                url = str(ref or "").strip()
+            if url.startswith("http"):
+                urls.append(url)
+        return list(dict.fromkeys(urls))[:12]
     
     def __init__(self, timeout: float = 10.0, cache_path: str = "storage/cve_cache.json"):
         self.timeout = timeout
@@ -102,14 +194,34 @@ class CVELookup:
             # Try NVD/CVE API
             results.extend(self._search_nvd(term, version))
         
-        # Deduplicate by CVE ID
-        seen = set()
-        deduped = []
+        # Deduplicate by CVE ID, preserving richer evidence.
+        best = {}
         for cve in results:
-            cve_id = cve.get("id", "")
-            if cve_id and cve_id not in seen:
-                seen.add(cve_id)
-                deduped.append(cve)
+            cve_id = str(cve.get("id") or "").strip().upper()
+            if not cve_id:
+                continue
+            current = best.get(cve_id)
+            if not current:
+                best[cve_id] = dict(cve)
+                continue
+
+            cand_score = float(cve.get("score", 0) or 0)
+            cur_score = float(current.get("score", 0) or 0)
+            cand_desc = str(cve.get("description") or "")
+            cur_desc = str(current.get("description") or "")
+            choose_candidate = cand_score > cur_score or (cand_score == cur_score and len(cand_desc) > len(cur_desc))
+
+            if choose_candidate:
+                base = dict(cve)
+                base_refs = list(dict.fromkeys((current.get("references") or []) + (cve.get("references") or [])))[:20]
+                base["references"] = base_refs
+                base["likely_affected"] = bool(current.get("likely_affected", True) or cve.get("likely_affected", True))
+                best[cve_id] = base
+            else:
+                current["references"] = list(dict.fromkeys((current.get("references") or []) + (cve.get("references") or [])))[:20]
+                current["likely_affected"] = bool(current.get("likely_affected", True) or cve.get("likely_affected", True))
+
+        deduped = list(best.values())
         
         self.cache[cache_key] = {
             "fetched_at": datetime.now().timestamp(),
@@ -147,13 +259,26 @@ class CVELookup:
             
             if data.get("data", {}).get("documents"):
                 for cve_id, cve_data in data["data"]["documents"].items():
+                    references = []
+                    raw_refs = cve_data.get("references")
+                    if isinstance(raw_refs, list):
+                        for ref in raw_refs:
+                            if isinstance(ref, dict):
+                                url = str(ref.get("url") or ref.get("href") or "").strip()
+                            else:
+                                url = str(ref or "").strip()
+                            if url.startswith("http"):
+                                references.append(url)
+
                     cves.append({
                         "id": cve_id,
                         "score": cve_data.get("cvssScore", [0])[0] if cve_data.get("cvssScore") else 0,
                         "description": cve_data.get("description", ""),
                         "severity": self._score_to_severity(cve_data.get("cvssScore", [0])[0] if cve_data.get("cvssScore") else 0),
                         "source": "vulners",
-                        "affected_versions": cve_data.get("affectedVersions", [])
+                        "affected_versions": cve_data.get("affectedVersions", []),
+                        "references": list(dict.fromkeys(references))[:12],
+                        "likely_affected": True,
                     })
             
             return cves
@@ -205,6 +330,7 @@ class CVELookup:
                     elif metrics.get("cvssMetricV2"):
                         score = metrics["cvssMetricV2"][0]["cvssData"]["baseScore"]
                     
+                    likely_affected = self._likely_affected_by_nvd_config(cve_data, version)
                     cves.append({
                         "id": cve_data.get("id", ""),
                         "score": score,
@@ -212,7 +338,9 @@ class CVELookup:
                         "severity": self._score_to_severity(score),
                         "source": "nvd",
                         "published": cve_data.get("published", ""),
-                        "updated": cve_data.get("lastModified", "")
+                        "updated": cve_data.get("lastModified", ""),
+                        "references": self._extract_reference_urls(cve_data),
+                        "likely_affected": bool(likely_affected),
                     })
             
             return cves
@@ -270,7 +398,7 @@ class CVELookup:
 
 
 def lookup_service_vulnerabilities(service: str, version: Optional[str] = None,
-                                   max_results: int = 20,
+                                   max_results: Optional[int] = 80,
                                    lookup: Optional[CVELookup] = None) -> Dict:
     """
     Convenience function to lookup vulnerabilities for a detected service.
@@ -305,7 +433,8 @@ def lookup_service_vulnerabilities(service: str, version: Optional[str] = None,
         "low": []
     }
     
-    for cve in cves[:max_results]:
+    selected = cves if not max_results else cves[:int(max_results)]
+    for cve in selected:
         severity = cve["severity"]
         if severity in result:
             result[severity].append({

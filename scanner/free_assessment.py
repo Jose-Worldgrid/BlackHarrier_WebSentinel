@@ -116,7 +116,7 @@ class FreeAssessment:
                             lookup_service_vulnerabilities,
                             service_str,
                             None,
-                            20,
+                            80,
                             lookup,
                         ): (port, service_info)
                         for port, service_info, service_str in cve_jobs

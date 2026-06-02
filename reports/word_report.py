@@ -178,6 +178,13 @@ REPORT_NOISE_MODULES = {
     "Control de calidad AI",
 }
 
+IP_CONTEXT_ALLOWLIST = {
+    "red e infraestructura": "Reconocimiento de red",
+    "puertos y servicios": "Puertos/servicios",
+    "nmap reconnaissance": "Nmap",
+    "nessus/tenable": "Nessus/Tenable",
+}
+
 
 def safe_text(value):
     return str(value if value is not None else "")
@@ -195,6 +202,18 @@ def truncate(text, limit=450):
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "..."
+
+
+def _append_unique_text(target_list: list, seen: set, value: str, *, limit: int = 220) -> bool:
+    normalized = re.sub(r"\s+", " ", safe_text(value)).strip()
+    if not normalized:
+        return False
+    key = normalized.lower()
+    if key in seen:
+        return False
+    seen.add(key)
+    target_list.append(truncate(normalized, limit))
+    return True
 
 
 def clean_evidence_for_report(text):
@@ -278,7 +297,9 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
     """Mine all result evidence for concrete pentesting data."""
     assets = {
         "ips": [],
+        "ip_context": {},    # ip -> set(source modules/contexts)
         "ports": [],          # list of {"port", "service", "severity", "banner"}
+        "databases": [],      # list of {"type", "host", "port", "version", "source"}
         "technologies": [],   # list of {"tech", "version", "source"}
         "users": [],          # emails / usernames found
         "credentials": [],    # any credential evidence
@@ -292,6 +313,14 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
     seen_tech = set()
     seen_users = set()
     seen_paths = set()
+    seen_creds = set()
+    seen_jwts = set()
+    seen_api_endpoints = set()
+    seen_headers = set()
+    seen_databases = set()
+
+    host_re = re.compile(r"host\s*:\s*([^|\s]+)", re.I)
+    service_re = re.compile(r"servicio\s*:\s*([^|]+)", re.I)
 
     for item in results:
         module = safe_text(item.get("Módulo", "")).lower()
@@ -306,6 +335,10 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
             if ip not in seen_ips:
                 seen_ips.add(ip)
                 assets["ips"].append(ip)
+            module_name = safe_text(item.get("Módulo", "")).strip().lower()
+            source_label = IP_CONTEXT_ALLOWLIST.get(module_name)
+            if source_label:
+                assets.setdefault("ip_context", {}).setdefault(ip, set()).add(source_label)
 
         # ── Open ports ────────────────────────────────────────────────
         if "puertos" in module or "port" in module or "red" in module:
@@ -333,8 +366,20 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
                         sev = "Media"
                     else:
                         sev = "Baja"
+                    host_hint = ""
+                    host_match = host_re.search(evidence)
+                    if host_match:
+                        host_hint = host_match.group(1).strip()
+
+                    service_hint = ""
+                    service_match = service_re.search(evidence)
+                    if service_match:
+                        service_hint = service_match.group(1).strip()
+
                     assets["ports"].append({
                         "port": p,
+                        "host": host_hint,
+                        "service": service_hint,
                         "banner": banner_map.get(p, ""),
                         "severity": sev,
                     })
@@ -358,11 +403,11 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
 
         # ── Credentials ───────────────────────────────────────────────
         for m in _RE_CRED_HINT.finditer(text):
-            assets["credentials"].append(f"{control}: {m.group(0)[:120]}")
+            _append_unique_text(assets["credentials"], seen_creds, f"{control}: {m.group(0)[:120]}", limit=160)
 
         # ── JWT tokens ───────────────────────────────────────────────
         for jwt in _RE_JWT.findall(text):
-            assets["jwts"].append(f"{control}: {jwt[:80]}...")
+            _append_unique_text(assets["jwts"], seen_jwts, f"{control}: {jwt[:80]}...", limit=120)
 
         # ── Auth result ───────────────────────────────────────────────
         if "autent" in module or module == "autenticación":
@@ -373,7 +418,7 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
 
         # ── Exposed server headers ───────────────────────────────────
         if any(h in evidence.lower() for h in ["server:", "x-powered-by:", "x-aspnet"]):
-            assets["exposed_headers"].append(truncate(evidence, 200))
+            _append_unique_text(assets["exposed_headers"], seen_headers, evidence, limit=200)
 
         # ── Sensitive paths ───────────────────────────────────────────
         for path in _RE_SENSITIVE_PATH.findall(text):
@@ -384,7 +429,46 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
 
         # ── API endpoints ────────────────────────────────────────────
         if "api" in module and resultado in FINDING_STATUSES:
-            assets["api_endpoints"].append(truncate(evidence, 260))
+            _append_unique_text(assets["api_endpoints"], seen_api_endpoints, evidence, limit=260)
+
+        # ── Database exposures from deep infra findings ───────────────
+        if "base de datos expuesta detectada" in control.lower() or "mysql" in text.lower() or "postgres" in text.lower() or "mongodb" in text.lower() or "redis" in text.lower():
+            db_type = ""
+            db_match = re.search(r"Base de datos expuesta detectada:\s*([^|]+)", control, re.IGNORECASE)
+            if db_match:
+                db_type = db_match.group(1).strip()
+            if not db_type:
+                for name in ["MySQL/MariaDB", "PostgreSQL", "Microsoft SQL Server", "Oracle Database", "MongoDB", "Redis", "Elasticsearch", "Cassandra", "CouchDB", "Memcached"]:
+                    if name.lower() in text.lower():
+                        db_type = name
+                        break
+
+            host = ""
+            host_match = re.search(r"Host(?:/IP)?\s*:\s*([^|]+)", evidence, re.IGNORECASE)
+            if host_match:
+                host = host_match.group(1).strip()
+
+            port = ""
+            port_match = re.search(r"Puerto\s*:\s*(\d+)", evidence, re.IGNORECASE)
+            if port_match:
+                port = port_match.group(1)
+
+            version = ""
+            version_match = re.search(r"Versión\s*:\s*([^|]+)", evidence, re.IGNORECASE)
+            if version_match:
+                version = version_match.group(1).strip()
+
+            if db_type:
+                key = (db_type.lower(), host.lower(), str(port).strip(), version.lower())
+                if key not in seen_databases:
+                    seen_databases.add(key)
+                    assets["databases"].append({
+                        "type": db_type,
+                        "host": host,
+                        "port": port,
+                        "version": version,
+                        "source": module,
+                    })
 
     # Pages: extract sensitive paths from classified URLs
     for page in pages or []:
@@ -396,6 +480,12 @@ def extract_sensitive_assets(results: list, pages: list) -> dict:
                 if p not in seen_paths:
                     seen_paths.add(p)
                     assets["sensitive_paths"].append(p)
+
+    # Convert context sets to sorted lists for deterministic output.
+    assets["ip_context"] = {
+        ip: sorted(list(ctxs))
+        for ip, ctxs in (assets.get("ip_context") or {}).items()
+    }
 
     return assets
 
@@ -1042,16 +1132,25 @@ def add_sensitive_assets_section(document, assets: dict):
     ips = assets.get("ips") or []
     if ips:
         document.add_heading("IPs/Hosts descubiertos", 3)
-        document.add_paragraph(", ".join(ips[:8]))
+        ip_context = assets.get("ip_context") or {}
+        for ip in ips[:10]:
+            contexts = ip_context.get(ip) or []
+            if contexts:
+                document.add_paragraph(
+                    f"{ip} — evidencia técnica: {', '.join(contexts[:3])}",
+                    style="List Bullet",
+                )
+            else:
+                document.add_paragraph(ip, style="List Bullet")
 
     # ── Open ports ────────────────────────────────────────────────────
     ports = assets.get("ports") or []
     if ports:
         document.add_heading(f"Puertos abiertos ({len(ports)} encontrados)", 3)
-        table = document.add_table(rows=1, cols=4)
+        table = document.add_table(rows=1, cols=6)
         table.style = "Table Grid"
         hdr = table.rows[0]
-        for i, h in enumerate(["Puerto", "Severidad", "Banner", "Riesgo"]):
+        for i, h in enumerate(["Host", "Puerto", "Servicio", "Severidad", "Banner", "Riesgo"]):
             hdr.cells[i].text = h
         style_header_row(hdr)
         seen_p = set()
@@ -1064,12 +1163,14 @@ def add_sensitive_assets_section(document, assets: dict):
                 continue
             seen_p.add(p_num)
             row = table.add_row().cells
-            row[0].text = str(p_num)
+            row[0].text = pinfo.get("host", "") or "—"
+            row[1].text = str(p_num)
+            row[2].text = pinfo.get("service", "") or "—"
             sev = pinfo.get("severity", "Baja")
-            row[1].text = sev
-            row[2].text = pinfo.get("banner", "") or "—"
-            row[3].text = "⚠ CRÍTICO" if p_num in {23, 3389, 5900, 6379, 9200, 27017, 2375} else "Revisar"
-            style_severity_cell(row[1], sev)
+            row[3].text = sev
+            row[4].text = pinfo.get("banner", "") or "—"
+            row[5].text = "⚠ CRÍTICO" if p_num in {23, 3389, 5900, 6379, 9200, 27017, 2375} else "Revisar"
+            style_severity_cell(row[3], sev)
 
     # ── Technologies ──────────────────────────────────────────────────
     techs = assets.get("technologies") or []
@@ -1121,6 +1222,25 @@ def add_sensitive_assets_section(document, assets: dict):
         for p in sorted(set(paths))[:10]:
             document.add_paragraph(p, style="List Bullet")
 
+    # ── Databases ─────────────────────────────────────────────────────
+    dbs = assets.get("databases") or []
+    if dbs:
+        document.add_heading(f"Bases de datos detectadas ({len(dbs)})", 3)
+        table = document.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+        headers = ["Tipo", "Host/IP", "Puerto", "Versión", "Origen"]
+        for i, h in enumerate(headers):
+            table.rows[0].cells[i].text = h
+        style_header_row(table.rows[0])
+
+        for db in dbs[:10]:
+            row = table.add_row().cells
+            row[0].text = db.get("type", "")
+            row[1].text = db.get("host", "") or "—"
+            row[2].text = str(db.get("port", "") or "—")
+            row[3].text = db.get("version", "") or "—"
+            row[4].text = db.get("source", "") or "—"
+
     # ── API endpoints ─────────────────────────────────────────────────
     apis = assets.get("api_endpoints") or []
     if apis:
@@ -1135,7 +1255,7 @@ def add_sensitive_assets_section(document, assets: dict):
         for h in hdrs[:4]:
             document.add_paragraph(h, style="List Bullet")
 
-    if not any([ips, ports, techs, users, creds, jwts, paths, apis, hdrs, auth]):
+    if not any([ips, ports, techs, users, creds, jwts, paths, apis, dbs, hdrs, auth]):
         document.add_paragraph(
             "No se extrajo inteligencia técnica concreta. "
             "Esto puede indicar que el objetivo usa ofuscación o que los módulos de reconocimiento necesitan credenciales."
@@ -1487,7 +1607,7 @@ def add_auth_surface_summary(document, pages):
         page for page in _dedupe_pages_for_report(pages or [])
         if is_reportable_page(page)
         and (
-            page.get("classification") in ["auth", "registration", "protected_redirect_to_auth"]
+            page.get("classification") in ["auth", "registration"]
             or any(x in safe_text(page.get("url")).lower() for x in auth_keywords)
             or any(x in safe_text(page.get("final_url")).lower() for x in auth_keywords)
         )
@@ -1572,12 +1692,12 @@ def add_authenticated_session_evidence(document, results, pages):
         and _is_meaningful_page_for_report(page)
     ]
     new_post_login_pages = [page for page in post_login_pages if page.get("is_new_post_login")]
-    display_post_login = new_post_login_pages
-    protected_keywords = ["admin", "dashboard", "backoffice", "private", "restauranteadministracion"]
+    display_post_login = new_post_login_pages or post_login_pages
+    protected_keywords = ["admin", "dashboard", "backoffice", "private"]
     protected_pages = [
         page for page in display_post_login
         if safe_text(page.get("classification")).lower() in {
-            "protected", "admin_candidate", "api_candidate", "sensitive_candidate"
+            "protected", "protected_redirect_to_auth", "admin_candidate", "api_candidate", "sensitive_candidate"
         }
         or any(
             token in safe_text(page.get("final_url") or page.get("url")).lower()
@@ -1609,11 +1729,19 @@ def add_authenticated_session_evidence(document, results, pages):
         row for row in results or []
         if safe_text(row.get("Módulo")).strip() == "Discovery post-login"
     ]
-    if post_login_results and display_post_login:
+    compact_post_login_results = []
+    seen_post_login_events = set()
+    for row in post_login_results:
+        key = _result_dedupe_key(row)
+        if key in seen_post_login_events:
+            continue
+        seen_post_login_events.add(key)
+        compact_post_login_results.append(row)
+    if compact_post_login_results and display_post_login:
         document.add_paragraph(
-            f"Evidencias adicionales de discovery post-login registradas: {len(post_login_results)} evento(s)."
+            f"Evidencias adicionales de discovery post-login registradas: {len(compact_post_login_results)} evento(s) netos."
         )
-        for row in post_login_results[:5]:
+        for row in compact_post_login_results[:3]:
             document.add_paragraph(
                 truncate(clean_evidence_for_report(row.get("Evidencia")), 260),
                 style="List Bullet",
@@ -2071,45 +2199,22 @@ def add_discovery_dictionary_section(document, discovery):
     document.add_paragraph(f"Rutas protegidas/API/sensibles: {metrics.get('protected_routes', 0) + metrics.get('api_candidates', 0) + metrics.get('sensitive_candidates', 0)}")
     document.add_paragraph(f"Soft-404 omitidos: {metrics.get('soft_404', 0)}")
 
-    reportable = [
+    reportable_count = len([
         item for item in normalized_discovered
         if item.get("classification") in REPORTABLE_PAGE_CLASSES
         and str(item.get("status_code")) != "404"
-    ]
+    ])
 
-    # Keep only one row per final URL to avoid repetitive dictionary noise.
-    seen_final = set()
-    compact_reportable = []
-    for item in reportable:
-        final_url = safe_text(item.get("final_url") or item.get("requested_url")).strip().rstrip("/")
-        if not final_url or final_url in seen_final:
-            continue
-        seen_final.add(final_url)
-        compact_reportable.append(item)
-
-    if not compact_reportable:
+    if reportable_count <= 0:
         document.add_paragraph(
             "No se identificaron rutas relevantes mediante diccionario. "
             "Las rutas inexistentes o soft-404 se han omitido del informe para reducir ruido."
         )
         return
 
-    table = document.add_table(rows=1, cols=6)
-    table.style = "Table Grid"
-
-    headers = ["Origen", "URL solicitada", "URL final", "HTTP", "Clasificación", "Observación"]
-
-    for i, h in enumerate(headers):
-        table.rows[0].cells[i].text = h
-
-    for item in compact_reportable[:12]:
-        row = table.add_row().cells
-        row[0].text = str(item.get("source", ""))
-        row[1].text = truncate(item.get("requested_url", ""), 120)
-        row[2].text = truncate(item.get("final_url", ""), 120)
-        row[3].text = str(item.get("status_code", ""))
-        row[4].text = str(item.get("classification", ""))
-        row[5].text = truncate(item.get("observation", ""), 180)
+    document.add_paragraph(
+        "Detalle de URLs relevantes ya consolidado en la Sección 3 para evitar duplicidad entre tablas de discovery."
+    )
 
 
 def add_conclusion(document, findings, errors, results=None):
@@ -2162,7 +2267,7 @@ def generate_word_report(
 ):
     os.makedirs("generated_reports", exist_ok=True)
 
-    pages = pages or []
+    pages = _dedupe_pages_for_report(pages or [])
     if pages_count is None:
         pages_count = len(pages)
 

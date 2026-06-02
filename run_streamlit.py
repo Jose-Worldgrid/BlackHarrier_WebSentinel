@@ -9,18 +9,20 @@ import platform
 import sys
 
 
-_original_platform_system = platform.system
-
-
 def _safe_platform_system():
-    try:
-        return _original_platform_system()
-    except Exception:
-        # Streamlit only needs coarse OS detection here.
-        return "Windows"
+    # Force fast path: on some Python 3.14 + Windows setups, platform.system()
+    # can block in WMI queries during Streamlit import.
+    return "Windows"
 
 
 platform.system = _safe_platform_system
+
+
+def _safe_win32_ver(*_args, **_kwargs):
+    return ("Windows", "", "", "")
+
+
+platform.win32_ver = _safe_win32_ver
 
 # Optional: make startup behavior deterministic for this workspace.
 os.environ.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")

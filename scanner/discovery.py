@@ -31,6 +31,11 @@ BAD_PATHS = {
     "/none",
 }
 
+STATIC_RESOURCE_EXTENSIONS = (
+    ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf", ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
+)
+
 LANG_PREFIX_RE = re.compile(r"^[a-z]{2}(?:-[a-z]{2})?$")
 
 
@@ -48,6 +53,11 @@ def is_noise_path(path: str) -> bool:
 
 def normalize_url(url: str) -> str:
     return str(url or "").strip().rstrip("/")
+
+
+def _is_static_resource_url(url: str) -> bool:
+    path = urlparse(str(url or "")).path.lower()
+    return bool(path.endswith(STATIC_RESOURCE_EXTENSIONS))
 
 
 def safe_status(value):
@@ -224,6 +234,7 @@ def is_soft_404(response, baseline) -> bool:
 def classify_url(requested_url, final_url, response, baseline=None):
     requested_path = urlparse(requested_url).path.lower()
     final_path = urlparse(final_url).path.lower()
+    content_type = str(getattr(response, "headers", {}).get("Content-Type", "")).lower()
     full_body = response.text or ""
     body = (full_body[:15000] + "\n" + full_body[-15000:]).lower()
     admin_requested = any(x in requested_path for x in ["admin", "administrator", "panel", "dashboard", "private", "backoffice", "manager"])
@@ -243,6 +254,12 @@ def classify_url(requested_url, final_url, response, baseline=None):
 
     if is_soft_404(response, baseline):
         return "soft_404"
+
+    if _is_static_resource_url(final_url) or _is_static_resource_url(requested_url):
+        return "static_resource"
+
+    if any(marker in content_type for marker in ["application/javascript", "text/javascript", "text/css", "image/"]):
+        return "static_resource"
 
     if response.status_code in [401, 403]:
         return "protected"
@@ -377,14 +394,25 @@ def build_discovery_results(discovered):
     return results
 
 
-def discover_surface(base_url: str, client=None, seed_pages=None, max_active_checks=300):
+def discover_surface(base_url: str, client=None, seed_pages=None, max_active_checks=300, extra_candidate_urls=None):
     client = client or HttpClient(verify_ssl=False)
 
     base_url = normalize_url(client.normalize_url(base_url))
     origin = get_origin(base_url)
 
     seed_pages = seed_pages or []
-    candidate_urls = build_candidate_urls(base_url, seed_pages)[:max_active_checks]
+    candidate_urls = build_candidate_urls(base_url, seed_pages)
+    if extra_candidate_urls:
+        for url in extra_candidate_urls:
+            text = normalize_url(url)
+            if not text:
+                continue
+            if not _same_origin(base_url, text):
+                continue
+            candidate_urls.append(text)
+
+    # preserve order + dedupe
+    candidate_urls = list(dict.fromkeys(candidate_urls))[:max_active_checks]
     baseline = get_soft404_baseline(client, origin)
 
     discovered = []
@@ -398,6 +426,9 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
         requested_url = normalize_url(page.get("url"))
 
         if not final_url:
+            continue
+
+        if _is_static_resource_url(final_url) or _is_static_resource_url(requested_url):
             continue
 
         status_code = safe_status(page.get("status_code"))
@@ -447,6 +478,9 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
 
     for url in candidate_urls:
         if not _same_origin(base_url, url):
+            continue
+
+        if _is_static_resource_url(url):
             continue
 
         parsed_url = urlparse(url)

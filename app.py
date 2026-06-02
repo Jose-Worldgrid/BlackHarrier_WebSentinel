@@ -3,7 +3,7 @@ import os
 import re
 import traceback
 import concurrent.futures
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from datetime import datetime
 from requests.utils import dict_from_cookiejar
 
@@ -38,7 +38,8 @@ from scanner.ssti import scan_ssti
 from scanner.ssrf import scan_ssrf_hints
 from scanner.path_traversal import scan_path_traversal
 from scanner.dependency_exposure import scan_dependency_exposure
-from scanner.discovery import discover_surface
+from scanner.discovery import discover_surface, classify_url as classify_discovery_url, get_soft404_baseline
+from scanner.katana_discovery import run_katana_discovery
 from scanner.auth_sqli import scan_auth_sqli
 from scanner import network_recon
 from scanner.user_enum import scan_user_enumeration
@@ -48,6 +49,9 @@ from scanner.nmap_scanner import run_nmap_recon
 from scanner.nessus_client import NessusConfig, run_nessus_assessment
 from scanner.free_assessment import FreeAssessment
 from scanner.cve_lookup import CVELookup
+from scanner.cve_intel import enrich_cves_with_free_intel
+from scanner.external_tools_pipeline import run_external_tools_pipeline, verificar_endpoints_httpx
+from scanner.tool_detection import detect_external_web_tools
 from scanner.offensive_intel import (
     collect_external_scan_targets,
     build_ai_recon_contract,
@@ -248,6 +252,102 @@ def _collect_login_candidates(target_url, pages, manual_login_url=""):
 
     ordered = sorted(unique, key=lambda u: (_login_priority(u), original_pos[u]))
     return ordered[:8]
+
+
+def _build_external_auth_params(auth_status, auth_cookies):
+    cookie_map = dict(auth_cookies or {})
+    if not cookie_map:
+        return {}
+
+    status = str(auth_status or "").strip().lower()
+    if status not in {"autenticado", "indeterminado"}:
+        return {}
+
+    pairs = []
+    for key in sorted(cookie_map.keys()):
+        k = str(key or "").strip()
+        v = str(cookie_map.get(key) or "").strip()
+        if not k:
+            continue
+        pairs.append(f"{k}={v}")
+
+    cookie_header = "; ".join(pairs).strip()
+    if not cookie_header:
+        return {}
+
+    return {
+        "cookie": cookie_header,
+        "headers": [f"Cookie: {cookie_header}"],
+    }
+
+
+def _extract_post_login_route_hints(target_url, pages, max_hints=60):
+    """Extract likely authenticated routes from HTML/runtime/forms without hardcoding app-specific paths."""
+    base = urlparse(str(target_url or "").strip())
+    if not base.scheme or not base.netloc:
+        return []
+
+    origin = f"{base.scheme}://{base.netloc}"
+    same_host = base.hostname or ""
+
+    route_token = re.compile(r"/(?:[A-Za-z0-9_\-]{2,}/){0,5}[A-Za-z0-9_\-]{2,}(?:\?[A-Za-z0-9_\-=&%]+)?")
+    high_value_tokens = [
+        "admin", "dashboard", "panel", "backoffice", "perfil", "cuenta", "usuario",
+        "account", "settings", "private", "manage", "manager",
+    ]
+
+    discovered = []
+    seen = set()
+
+    def _add_candidate(raw_url):
+        text = str(raw_url or "").strip().strip('"\'')
+        if not text:
+            return
+        if text.startswith("javascript:") or text.startswith("data:"):
+            return
+
+        if text.startswith("/"):
+            full = urljoin(origin, text)
+        elif text.startswith("http://") or text.startswith("https://"):
+            full = text
+        else:
+            return
+
+        parsed = urlparse(full)
+        if not parsed.scheme or not parsed.netloc:
+            return
+        if parsed.hostname != same_host:
+            return
+
+        normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path or '/'}"
+        if normalized in seen:
+            return
+        if len(parsed.path or "") < 3:
+            return
+
+        low = normalized.lower()
+        if not any(tok in low for tok in high_value_tokens):
+            return
+
+        seen.add(normalized)
+        discovered.append(normalized)
+
+    for page in pages or []:
+        html_sources = [
+            str(page.get("html") or ""),
+            str(page.get("rendered_html") or ""),
+            str((page.get("browser_runtime") or {}).get("html") or ""),
+        ]
+        for html_blob in html_sources:
+            if not html_blob:
+                continue
+            for path in route_token.findall(html_blob):
+                _add_candidate(path)
+
+        for form in (page.get("forms") or []):
+            _add_candidate(form.get("action") or "")
+
+    return discovered[:max_hints]
 
 
 st.markdown("""
@@ -500,6 +600,63 @@ st.markdown("""
         border-radius: 6px;
         padding: 2px 5px;
     }
+
+    .bh-toolbox {
+        margin: 0.6rem 0 0.9rem 0;
+        padding: 0.8rem 0.85rem;
+        border: 1px solid rgba(148, 163, 184, 0.14);
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.7), rgba(10, 15, 22, 0.92));
+    }
+
+    .bh-toolbox-title {
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #8ea0b8;
+        margin-bottom: 0.55rem;
+    }
+
+    .bh-tool-pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+
+    .bh-tool-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.38rem;
+        padding: 0.22rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        background: rgba(15, 23, 42, 0.75);
+        color: #dbe7f3;
+    }
+
+    .bh-tool-dot {
+        width: 0.42rem;
+        height: 0.42rem;
+        border-radius: 999px;
+        display: inline-block;
+    }
+
+    .bh-tool-ok {
+        background: #22c55e;
+        box-shadow: 0 0 10px rgba(34, 197, 94, 0.45);
+    }
+
+    .bh-tool-miss {
+        background: #f59e0b;
+        box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
+    }
+
+    .bh-toolbox-hint {
+        margin-top: 0.5rem;
+        font-size: 0.72rem;
+        color: #8ea0b8;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -527,6 +684,32 @@ with st.sidebar:
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---")
     st.header("Configuración de auditoría")
+
+    external_tool_status = detect_external_web_tools()
+    tool_pills = []
+    for tool_name, label in [("katana", "Katana"), ("httpx", "HTTPX"), ("nuclei", "Nuclei")]:
+        info = external_tool_status.get(tool_name) or {}
+        dot_class = "bh-tool-ok" if info.get("available") else "bh-tool-miss"
+        state_label = "listo" if info.get("available") else "no detectado"
+        tool_pills.append(
+            f'<span class="bh-tool-pill"><span class="bh-tool-dot {dot_class}"></span>{label}: {state_label}</span>'
+        )
+
+    detected_paths = [
+        f"{name}: {(external_tool_status.get(name) or {}).get('source') or 'sin ruta'}"
+        for name in ["katana", "httpx", "nuclei"]
+        if (external_tool_status.get(name) or {}).get("available")
+    ]
+    st.markdown(
+        (
+            '<div class="bh-toolbox">'
+            '<div class="bh-toolbox-title">Motores externos web</div>'
+            f'<div class="bh-tool-pill-row">{"".join(tool_pills)}</div>'
+            f'<div class="bh-toolbox-hint">{" | ".join(detected_paths) if detected_paths else "Sin motores externos accesibles desde esta sesión."}</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
     audit_name = st.text_input(
         "Nombre de auditoría",
@@ -642,7 +825,7 @@ with st.sidebar:
         nmap_profile = "SAFE"
         include_udp = False
     else:
-        nmap_profile = "AGGRESSIVE" if _nmap_bin else "DEEP"
+        nmap_profile = "KALI_FULL" if _nmap_bin else "DEEP"
         include_udp = True
 
     nmap_timeout_seconds = 420
@@ -1556,21 +1739,69 @@ def is_redirected_page(page):
     return bool(requested_url and final_url and requested_url != final_url)
 
 
+def _is_static_resource_url(url):
+    path = urlparse(str(url or "")).path.lower()
+    static_exts = (
+        ".js", ".css", ".map", ".json", ".xml", ".txt",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+        ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
+    )
+    return bool(path.endswith(static_exts))
+
+
+def _looks_like_auth_gate_page(page):
+    classification = str(page.get("classification", "")).lower()
+    if classification in ["auth", "protected_redirect_to_auth"]:
+        return True
+
+    if has_auth_form_indicators(page):
+        return True
+
+    html_blobs = [
+        str(page.get("html") or ""),
+        str(page.get("rendered_html") or ""),
+        str((page.get("browser_runtime") or {}).get("html") or ""),
+    ]
+    combined = "\n".join(blob for blob in html_blobs if blob).lower()
+    if not combined:
+        return False
+
+    auth_markers = [
+        "iniciar sesión",
+        "iniciar sesion",
+        "sign in",
+        "log in",
+        "login",
+        "accede a tu cuenta",
+        "type=\"password\"",
+        "name=\"password\"",
+        "name=\"username\"",
+        "name=\"email\"",
+    ]
+    return any(marker in combined for marker in auth_markers)
+
+
 def is_admin_redirect_to_auth(page):
-    requested_url = str(page.get("url") or "").lower()
+    requested_url = str(page.get("url") or page.get("final_url") or "").lower()
     final_url = str(page.get("final_url") or requested_url).lower()
     classification = str(page.get("classification", "")).lower()
 
-    if not is_redirected_page(page):
+    admin_tokens = ["admin", "dashboard", "panel", "backoffice", "administrator"]
+    requested_admin = any(token in requested_url for token in admin_tokens)
+
+    if not requested_admin:
         return False
 
     if classification == "protected_redirect_to_auth":
         return True
 
-    admin_tokens = ["/admin", "dashboard", "panel", "backoffice", "administrator"]
     auth_tokens = ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion"]
 
-    return any(token in requested_url for token in admin_tokens) and any(token in final_url for token in auth_tokens)
+    if is_redirected_page(page) and any(token in final_url for token in auth_tokens):
+        return True
+
+    return _looks_like_auth_gate_page(page)
 
 
 def is_auth_like_page(page):
@@ -1587,6 +1818,9 @@ def is_auth_like_page(page):
 def is_auth_attack_page(page):
     url = str(page.get("final_url") or page.get("url") or "").lower()
     classification = str(page.get("classification", "")).lower()
+
+    if _is_static_resource_url(url):
+        return False
 
     if is_blocked_or_error_page(page):
         return False
@@ -1606,6 +1840,8 @@ def is_auth_attack_page(page):
 def has_auth_form_indicators(page):
     forms = page.get("forms") or []
     runtime_inputs = page.get("browser_inputs") or (page.get("browser_runtime") or {}).get("inputs") or []
+    classification = str(page.get("classification", "")).lower()
+    url = str(page.get("final_url") or page.get("url") or "").lower()
 
     flattened_forms = str(forms).lower()
     flattened_runtime = str(runtime_inputs).lower()
@@ -1613,7 +1849,14 @@ def has_auth_form_indicators(page):
 
     has_password = "password" in combined or "contraseña" in combined
     has_user = any(token in combined for token in ["email", "correo", "usuario", "user", "login"])
-    return has_password and has_user
+    auth_tokens = ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion", "register", "registro", "signup", "session"]
+    action_blob = " ".join(str(form.get("action") or "") for form in forms).lower()
+    contextual_auth = (
+        classification in ["auth", "registration"]
+        or any(token in url for token in auth_tokens)
+        or any(token in action_blob for token in auth_tokens)
+    )
+    return has_password and has_user and contextual_auth
 
 
 def build_auth_attack_pages(pages):
@@ -1626,6 +1869,9 @@ def build_auth_attack_pages(pages):
         classification = str(page.get("classification", "")).lower()
         ai_page_type = str((page.get("ai_context") or {}).get("page_type", "")).lower()
 
+        if _is_static_resource_url(url):
+            continue
+
         if is_admin_redirect_to_auth(page):
             continue
 
@@ -1635,7 +1881,6 @@ def build_auth_attack_pages(pages):
 
         is_candidate = (
             is_auth_attack_page(page)
-            or has_auth_form_indicators(page)
             or ai_page_type == "auth"
             or any(keyword in url for keyword in auth_keywords)
         )
@@ -1652,11 +1897,22 @@ def build_auth_attack_pages(pages):
 
 
 def is_generic_attack_page(page):
+    url = str(page.get("final_url") or page.get("url") or "").lower()
+    classification = str(page.get("classification", "")).lower()
+
+    if _is_static_resource_url(url):
+        return False
+
+    if classification in ["error_disclosure_candidate", "server_error"] and _is_static_resource_url(url):
+        return False
+
     if is_admin_redirect_to_auth(page):
         return False
 
+    if classification == "protected_redirect_to_auth":
+        return False
+
     # Login/registration with credentials fields must be attackable even if page text contains generic blockers.
-    classification = str(page.get("classification", "")).lower()
     if classification in ["auth", "registration"] and has_auth_form_indicators(page):
         return True
 
@@ -1781,10 +2037,32 @@ def _is_meaningful_post_login_page(page):
         return False
 
     classification = str(page.get("classification", "")).lower()
-    if classification in {"soft_404", "request_error", "html_candidate"}:
+    if classification in {"soft_404", "request_error", "html_candidate", "static_resource"}:
+        return False
+
+    if _is_static_resource_url(url):
         return False
 
     return True
+
+
+def _collect_post_login_candidate_endpoints(pages, max_items=30):
+    endpoints = []
+    seen = set()
+
+    for page in pages or []:
+        ai_context = page.get("ai_context") or {}
+        runtime = page.get("browser_runtime") or {}
+        for endpoint in (ai_context.get("candidate_endpoints") or []) + (runtime.get("candidate_endpoints") or []):
+            text = str(endpoint or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            endpoints.append(text)
+            if len(endpoints) >= max_items:
+                return endpoints
+
+    return endpoints
 
 
 def _discovered_entry_url(entry):
@@ -1901,8 +2179,8 @@ def add_browser_runtime_form_if_detected(page, runtime):
         current_classification = str(page.get("classification", "")).lower()
         url = str(page.get("final_url") or page.get("url") or "").lower()
 
-        if "admin" in url:
-            page["classification"] = "admin_candidate"
+        if any(token in url for token in ["admin", "dashboard", "panel", "backoffice", "administrator"]):
+            page["classification"] = "protected_redirect_to_auth" if _looks_like_auth_gate_page(page) else "admin_candidate"
         elif current_classification in ["auth", "html_candidate", ""]:
             page["classification"] = "auth"
 
@@ -1989,7 +2267,130 @@ def _collect_cves_from_nessus_structured(nessus_structured):
     return cves
 
 
-def _collect_nmap_service_cves(nmap_structured, *, max_services=8, max_cves_per_service=4):
+def _collect_cves_from_external_nuclei_findings(nuclei_findings):
+    cves = []
+    for finding in nuclei_findings or []:
+        if not isinstance(finding, dict):
+            continue
+
+        matched_at = str(finding.get("matched_at") or "").strip()
+        target_service = urlparse(matched_at).netloc or matched_at
+        finding_severity = str(finding.get("severity") or "")
+        finding_name = str(finding.get("name") or finding.get("template_id") or "Nuclei finding")
+        circl_rows = finding.get("circl") if isinstance(finding.get("circl"), list) else []
+
+        seen_ids = set()
+        for circl_item in circl_rows:
+            if not isinstance(circl_item, dict):
+                continue
+            cve_id = str(circl_item.get("id") or "").strip().upper()
+            if not cve_id.startswith("CVE-") or cve_id in seen_ids:
+                continue
+            seen_ids.add(cve_id)
+            cves.append({
+                "id": cve_id,
+                "score": float(circl_item.get("cvss") or 0) if str(circl_item.get("cvss") or "").strip() else 0,
+                "severity": finding_severity,
+                "description": str(circl_item.get("summary") or finding_name),
+                "service": target_service,
+                "version": "",
+                "source": "nuclei-circl",
+                "references": circl_item.get("references") or [],
+                "likely_affected": True,
+            })
+
+        for cve_id in finding.get("cve_ids") or []:
+            cve_id = str(cve_id or "").strip().upper()
+            if not cve_id.startswith("CVE-") or cve_id in seen_ids:
+                continue
+            seen_ids.add(cve_id)
+            cves.append({
+                "id": cve_id,
+                "score": 0,
+                "severity": finding_severity,
+                "description": finding_name,
+                "service": target_service,
+                "version": "",
+                "source": "nuclei",
+                "references": [],
+                "likely_affected": True,
+            })
+
+    return cves
+
+
+def _dedupe_cves_by_best_score(cves):
+    cve_best = {}
+    for cve in cves or []:
+        cve_id = str(cve.get("id") or "").strip().upper()
+        if not cve_id.startswith("CVE-"):
+            continue
+        score = float(cve.get("score", 0) or 0)
+        current = cve_best.get(cve_id)
+        if current is None or score > float(current.get("score", 0) or 0):
+            cve_best[cve_id] = dict(cve)
+    return list(cve_best.values())
+
+
+def _collect_cves_from_results_rows(results, max_items=80):
+    cve_re = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+    found = []
+    seen = set()
+
+    for row in results or []:
+        if not isinstance(row, dict):
+            continue
+        blob = " | ".join([
+            str(row.get("Control") or ""),
+            str(row.get("Descripción") or ""),
+            str(row.get("Evidencia") or ""),
+        ])
+        matches = cve_re.findall(blob)
+        if not matches:
+            continue
+
+        sev_text = str(row.get("Severidad") or "")
+        score = 0.0
+        if sev_text == "Crítica":
+            score = 9.0
+        elif sev_text == "Alta":
+            score = 7.5
+        elif sev_text == "Media":
+            score = 5.0
+        elif sev_text == "Baja":
+            score = 3.0
+
+        service_hint = ""
+        hint_match = re.search(r"https?://[^\s|]+", blob, re.IGNORECASE)
+        if hint_match:
+            try:
+                service_hint = urlparse(hint_match.group(0)).netloc
+            except Exception:
+                service_hint = ""
+
+        for token in matches:
+            cve_id = str(token or "").strip().upper()
+            if cve_id in seen:
+                continue
+            seen.add(cve_id)
+            found.append({
+                "id": cve_id,
+                "score": score,
+                "severity": sev_text,
+                "description": str(row.get("Descripción") or row.get("Control") or ""),
+                "service": service_hint,
+                "version": "",
+                "source": "results-fallback",
+                "references": [],
+                "likely_affected": True,
+            })
+            if len(found) >= max_items:
+                return found
+
+    return found
+
+
+def _collect_nmap_service_cves(nmap_structured, *, max_services=24, max_cves_per_service=10):
     """Query CVE intel for service/version pairs detected by Nmap."""
     hosts = (nmap_structured or {}).get("hosts") or []
     if not hosts:
@@ -2018,7 +2419,8 @@ def _collect_nmap_service_cves(nmap_structured, *, max_services=8, max_cves_per_
                 "version": version,
             })
 
-    services = services[:max_services]
+    if max_services:
+        services = services[:max_services]
     if not services:
         return [], []
 
@@ -2035,11 +2437,18 @@ def _collect_nmap_service_cves(nmap_structured, *, max_services=8, max_cves_per_
         if not found:
             continue
 
-        top = sorted(
+        ranked = sorted(
             found,
             key=lambda x: float(x.get("score", 0) or 0),
             reverse=True,
-        )[:max_cves_per_service]
+        )
+
+        # Keep CVEs likely affecting the detected version first; include very high-score tails.
+        top = [x for x in ranked if bool(x.get("likely_affected", True))]
+        if max_cves_per_service:
+            top = top[:max_cves_per_service]
+        if not top:
+            top = [x for x in ranked if float(x.get("score", 0) or 0) >= 9.0][: max(3, max_cves_per_service // 2 if max_cves_per_service else 5)]
 
         for cve in top:
             score = float(cve.get("score", 0) or 0)
@@ -2067,6 +2476,8 @@ def _collect_nmap_service_cves(nmap_structured, *, max_services=8, max_cves_per_
                 "service": svc["service"],
                 "version": svc["version"],
                 "source": "nmap-cve-correlation",
+                "references": cve.get("references") or [],
+                "likely_affected": bool(cve.get("likely_affected", True)),
             })
 
     if rows:
@@ -2080,6 +2491,242 @@ def _collect_nmap_service_cves(nmap_structured, *, max_services=8, max_cves_per_
         })
 
     return rows, cves_flat
+
+
+def _build_cve_intel_rows(cves, summary):
+    rows = []
+    if not cves:
+        return rows
+
+    rows.append({
+        "control": "Inteligencia CVE abierta (EPSS + KEV)",
+        "status": "Detectado",
+        "severity": "Informativa",
+        "description": "Se enriquecieron CVEs con señales públicas de explotabilidad activa para priorización real.",
+        "evidence": (
+            f"CVEs: {summary.get('total', 0)} | "
+            f"EPSS enriquecidos: {summary.get('epss_enriched', 0)} | "
+            f"CISA KEV: {summary.get('kev_hits', 0)} | "
+            f"Urgente/Alta/Media/Baja: "
+            f"{summary.get('urgent', 0)}/{summary.get('high', 0)}/{summary.get('medium', 0)}/{summary.get('low', 0)}"
+        ),
+        "recommendation": "Priorizar primero CVEs KEV y EPSS alto para mitigación y validación de exposición.",
+    })
+
+    top = sorted(
+        cves,
+        key=lambda x: (
+            1 if x.get("kev") else 0,
+            float(x.get("epss", 0) or 0),
+            float(x.get("score", 0) or 0),
+        ),
+        reverse=True,
+    )[:25]
+
+    for item in top:
+        score = float(item.get("score", 0) or 0)
+        epss = float(item.get("epss", 0) or 0)
+        sev = _severity_from_cvss(score)
+        cve_id = str(item.get("id") or "")
+        service = str(item.get("service") or "-")
+        rows.append({
+            "control": f"Priorización CVE: {cve_id}",
+            "status": "Posible hallazgo" if sev in {"Crítica", "Alta", "Media"} else "Detectado",
+            "severity": sev,
+            "description": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "evidence": (
+                f"CVE: {cve_id} | Servicio: {service} | CVSS: {score:.1f} | "
+                f"EPSS: {epss:.3f} | KEV: {'sí' if item.get('kev') else 'no'} | "
+                f"Prioridad: {item.get('priority_tier', '-') } | "
+                f"Afectación probable: {'sí' if item.get('likely_affected', True) else 'no'}"
+            ),
+            "recommendation": "Remediar por orden de prioridad (Urgente > Alta > Media > Baja) y validar exposición real.",
+        })
+
+    return rows
+
+
+def _select_actionable_cves(cves):
+    """Return CVEs with real operational priority for exploitation testing."""
+    selected = []
+    for cve in cves or []:
+        score = float(cve.get("score", 0) or 0)
+        epss = float(cve.get("epss", 0) or 0)
+        kev = bool(cve.get("kev"))
+        likely = bool(cve.get("likely_affected", True))
+        source = str(cve.get("source") or "").lower()
+        sev = str(cve.get("severity") or "").lower()
+
+        # Keep only CVEs that are either actively exploited/likely exploitable,
+        # and avoid weak low-relevance noise.
+        if kev or epss >= 0.30:
+            selected.append(cve)
+            continue
+        if score >= 7.0 and likely:
+            selected.append(cve)
+            continue
+        if score >= 9.0:
+            selected.append(cve)
+            continue
+
+        # Preserve CVEs discovered by external Nuclei/CIRCL pipeline even when
+        # enrichment is partial (e.g., EPSS unavailable) to keep exploit workflow visible.
+        if source in {"nuclei", "nuclei-circl", "results-fallback"} and sev in {"critical", "high", "medium", "alta", "media", "crítica", "critica"}:
+            selected.append(cve)
+            continue
+
+    return selected
+
+
+def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
+    if not suggestions:
+        return
+
+    def _is_generic_placeholder(text):
+        value = str(text or "").strip().lower()
+        if not value:
+            return True
+        generic_patterns = (
+            "consultar cve",
+            "consultar el aviso oficial del cve",
+            "detalles del vector de ataque",
+            "revisar referencias",
+        )
+        return any(pattern in value for pattern in generic_patterns)
+
+    def _clean_text(text):
+        value = str(text or "").strip()
+        return "" if _is_generic_placeholder(value) else value
+
+    def _collect_validation_commands(item):
+        commands = []
+        msf_hint = str(item.get("msf_hint") or "").strip()
+        if msf_hint and not _is_generic_placeholder(msf_hint):
+            commands.append(msf_hint)
+        for cmd in item.get("verification_commands") or []:
+            cmd_text = str(cmd or "").strip()
+            if cmd_text and cmd_text not in commands:
+                commands.append(cmd_text)
+        return commands[:4]
+
+    heading = "CVEs encontrados"
+    if title_suffix:
+        heading = f"{heading} {title_suffix}"
+
+    st.markdown("---")
+    st.subheader(f"{heading} ({len(suggestions)})")
+
+    crit = sum(1 for s in suggestions if s.get("severity") == "critical")
+    high = sum(1 for s in suggestions if s.get("severity") == "high")
+    ai_used = sum(1 for s in suggestions if s.get("ai_used"))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("CVEs analizados", len(suggestions))
+    c2.metric("Críticos / Altos", f"{crit} / {high}")
+    c3.metric("Enriquecidos con IA", ai_used)
+
+    for sug in suggestions:
+        sev = sug.get("severity", "info")
+        sev_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(sev, "⚪")
+        ai_badge = " · **[IA]**" if sug.get("ai_used") else ""
+        title = f"{sev_color} **{sug['cve_id']}** (CVSS {sug['score']:.1f}) – {sug['family']}{ai_badge}"
+
+        with st.expander(title, expanded=(sev in ("critical", "high"))):
+            service_label = " ".join(
+                part for part in [str(sug.get("service", "") or "").strip(), str(sug.get("version", "") or "").strip()]
+                if part
+            ) or "-"
+            technique = _clean_text(sug.get("technique"))
+            vector = _clean_text(sug.get("vector"))
+            remediation = str(sug.get("remediation") or "").strip()
+            validation_cmds = _collect_validation_commands(sug)
+
+            info_cols = st.columns([1.2, 1, 1])
+            info_cols[0].markdown(f"**Qué afecta:** {service_label}")
+            info_cols[1].markdown(f"**Familia:** {sug.get('family', '-')}")
+            info_cols[2].markdown(f"**Vector:** {vector or 'N/D'}")
+
+            if remediation:
+                st.markdown(f"**Remediación recomendada:** {remediation}")
+
+            left, right = st.columns([1.1, 0.9])
+            with left:
+                if technique:
+                    st.markdown(f"**Técnica de explotación:** {technique}")
+                if validation_cmds:
+                    st.markdown("**Comandos de validación**")
+                    for cmd in validation_cmds:
+                        st.code(cmd, language="bash")
+            with right:
+                if sug.get("description"):
+                    st.caption(sug["description"][:280])
+                if sug.get("exploit_links"):
+                    st.markdown("**Referencias de exploit**")
+                    for link in (sug.get("exploit_links") or [])[:4]:
+                        st.markdown(f"- {link}")
+
+            if sug.get("ai_analysis"):
+                ai = sug["ai_analysis"]
+                if ai.get("resumen"):
+                    st.info(f"**Resumen IA**: {ai['resumen']}")
+                if ai.get("pasos_explotacion"):
+                    st.markdown("**Cómo se explotaría (pasos breves):**")
+                    for i, paso in enumerate(ai["pasos_explotacion"], 1):
+                        st.markdown(f"{i}. {paso}")
+
+            if sug.get("poc"):
+                lang = "html" if str(sug["poc"]).strip().startswith("<") else "python"
+                st.markdown("**PoC / código de explotación (entorno controlado):**")
+                st.code(sug["poc"], language=lang)
+
+
+def _render_cve_findings_panel(*, cves, target_url, enable_exploit_ai, exploit_ai_model, max_items=12):
+    actionable = _select_actionable_cves(_dedupe_cves_by_best_score(cves or []))
+    if not actionable:
+        st.info("No se detectaron CVEs accionables para mostrar en esta ejecución.")
+        return
+
+    try:
+        from scanner.exploit_suggester import build_exploit_suggestions
+
+        suggestions = build_exploit_suggestions(
+            cves=actionable[:max_items],
+            target_url=target_url,
+            ollama_model=exploit_ai_model,
+            use_ollama=bool(enable_exploit_ai),
+            max_ai_queries=5 if enable_exploit_ai else 0,
+        )
+    except Exception:
+        suggestions = []
+
+    if not suggestions:
+        fallback = sorted(
+            actionable,
+            key=lambda x: float(x.get("score", 0) or 0),
+            reverse=True,
+        )[:max_items]
+        suggestions = [
+            {
+                "cve_id": str(item.get("id") or ""),
+                "score": float(item.get("score", 0) or 0),
+                "severity": str(item.get("severity") or "info").lower(),
+                "service": str(item.get("service") or ""),
+                "version": str(item.get("version") or ""),
+                "description": str(item.get("description") or ""),
+                "family": "Análisis CVE",
+                "technique": "Validación manual guiada",
+                "vector": "Network",
+                "poc": "# PoC no disponible en este contexto\n# Revisar referencias y validar en entorno controlado",
+                "msf_hint": f"searchsploit {str(item.get('id') or '')}",
+                "remediation": "Aplicar parche del proveedor y controles compensatorios.",
+                "exploit_links": list(item.get("references") or [])[:4],
+                "verification_commands": [f"searchsploit {str(item.get('id') or '')}"],
+                "ai_analysis": None,
+                "ai_used": False,
+            }
+            for item in fallback
+        ]
+
+    _render_exploit_suggestions_panel(suggestions, title_suffix="y explotabilidad")
 
 
 def build_attack_path_intel(*, all_results, discovered_urls, cves):
@@ -2207,6 +2854,7 @@ def _scan_phase1(
 ):
     """Phase 1: crawl, discovery, passive recon. Returns session state dict."""
     all_results = []
+    prefetched_web_chain = None
     scan_profile = SCAN_MODES.get(scan_mode, {})
     scan_delay = float(scan_profile.get("delay", 0.35))
     scan_payload_limit = scan_profile.get("max_payloads")
@@ -2254,6 +2902,50 @@ def _scan_phase1(
 
     with st.spinner("Discovery activo con diccionario de rutas comunes..."):
         try:
+            katana_depth = 3 if is_aggressive_mode else 2
+            katana_result = run_katana_discovery(
+                target_url=target_url,
+                depth=katana_depth,
+                timeout=320,
+            )
+            katana_urls = katana_result.get("urls") or []
+            httpx_active_urls, httpx_inspected, httpx_meta = verificar_endpoints_httpx(katana_urls)
+
+            prefetched_web_chain = {
+                "katana_urls": katana_urls,
+                "httpx_active_urls": httpx_active_urls,
+                "httpx_inspected": httpx_inspected,
+                "nuclei_findings": [],
+                "meta": {
+                    "katana": {
+                        "available": bool(katana_result.get("available")),
+                        "executed": bool(katana_result.get("executed")),
+                        "count": len(katana_urls),
+                        "error": str(katana_result.get("error") or "")[:180],
+                    },
+                    "httpx": httpx_meta,
+                    "nuclei": {"available": False, "executed": False, "count": 0},
+                },
+            }
+
+            if httpx_meta.get("executed"):
+                all_results.extend(normalize_results("Scope HTTPX", [{
+                    "control": "Katana + HTTPX (scope activo)",
+                    "status": "Detectado",
+                    "severity": "Informativa",
+                    "description": "Validación temprana de endpoints para alimentar discovery interno con rutas activas.",
+                    "evidence": (
+                        f"Katana URLs: {len(katana_urls)} | HTTPX inspeccionadas: {httpx_meta.get('count', 0)} | "
+                        f"HTTPX activas: {httpx_meta.get('active', 0)}"
+                    ),
+                    "recommendation": "Priorizar rutas activas para pruebas automáticas y validación de controles por endpoint.",
+                }]))
+
+            if katana_result.get("rows"):
+                all_results.extend(normalize_results("Katana Discovery", katana_result.get("rows") or []))
+
+            discovery_scope_urls = list(dict.fromkeys((httpx_active_urls or []) + (katana_urls or [])))
+
             active_checks_budget = _compute_discovery_active_checks(
                 is_aggressive_mode=is_aggressive_mode,
                 seed_pages_count=len(crawler_pages or []),
@@ -2263,6 +2955,7 @@ def _scan_phase1(
                 client=auth_client,
                 seed_pages=crawler_pages,
                 max_active_checks=active_checks_budget,
+                extra_candidate_urls=discovery_scope_urls,
             )
         except Exception:
             discovery = {
@@ -2353,32 +3046,26 @@ def _scan_phase1(
                     pre_auth_surface_keys.discard("")
 
                     post_auth_pages, _ = crawl_site(target_url, max_pages=None, client=auth_client)
+                    if auth_final_url and _canonical_surface_url(auth_final_url) != _canonical_surface_url(target_url):
+                        landing_pages, _ = crawl_site(auth_final_url, max_pages=None, client=auth_client)
+                        post_auth_pages = dedupe_pages_by_url((post_auth_pages or []) + (landing_pages or []))
+
                     for page in post_auth_pages or []:
                         page["discovery_context"] = "post_login"
                         page_key = _canonical_surface_url(page.get("final_url") or page.get("url"))
                         page["is_new_post_login"] = bool(page_key and page_key not in pre_auth_surface_keys)
 
-                    # Probe authenticated-only hint routes that crawlers miss due to JS rendering.
-                    _auth_hint_paths = [
-                        "/es/usuario", "/usuario", "/en/user", "/user",
-                        "/es/restaurantes", "/restaurantes",
-                        "/es/panel-usuario", "/panel-usuario",
-                        "/es/panel-restaurante", "/panel-restaurante",
-                        "/es/restauranteAdministracion", "/restauranteAdministracion",
-                        "/es/cuenta", "/cuenta", "/es/perfil", "/perfil",
-                        "/es/dashboard", "/dashboard",
-                        "/es/admin", "/admin",
-                        "/es/backoffice", "/backoffice",
-                        "/es/mis-restaurantes", "/mis-restaurantes",
-                    ]
+                    # Probe only authenticated routes that were actually observed in HTML/forms/runtime.
+                    _dynamic_post_login_hints = _extract_post_login_route_hints(target_url, post_auth_pages, max_hints=80)
                     _parsed_origin = urlparse(target_url)
                     _origin_base = f"{_parsed_origin.scheme}://{_parsed_origin.netloc}"
+                    _post_auth_baseline = get_soft404_baseline(auth_client, _origin_base)
                     _existing_post_keys = {
                         _canonical_surface_url(p.get("final_url") or p.get("url"))
                         for p in post_auth_pages
                     }
-                    for _hint_path in _auth_hint_paths:
-                        _hint_url = _origin_base + _hint_path
+                    for _hint_item in list(dict.fromkeys(_dynamic_post_login_hints)):
+                        _hint_url = _hint_item if str(_hint_item).startswith("http") else (_origin_base + str(_hint_item))
                         _hint_key = _canonical_surface_url(_hint_url)
                         if _hint_key in pre_auth_surface_keys or _hint_key in _existing_post_keys:
                             continue
@@ -2390,14 +3077,21 @@ def _scan_phase1(
                                 continue
                             _hint_html = _hint_resp.text or ""
                             _is_actually_new = _hint_final not in pre_auth_surface_keys
+                            _hint_final_url = str(_hint_resp.url or _hint_url)
+                            _hint_classification = classify_discovery_url(
+                                _hint_url,
+                                _hint_final_url,
+                                _hint_resp,
+                                baseline=_post_auth_baseline,
+                            )
                             post_auth_pages.append({
                                 "url": _hint_url,
-                                "final_url": str(_hint_resp.url or _hint_url),
+                                "final_url": _hint_final_url,
                                 "status_code": _hint_status,
                                 "content_type": _hint_resp.headers.get("Content-Type", ""),
                                 "html": _hint_html,
                                 "forms": [],
-                                "classification": "protected" if _hint_status in (200, 301, 302, 403) else "html_candidate",
+                                "classification": _hint_classification,
                                 "discovery_context": "post_login",
                                 "is_new_post_login": _is_actually_new,
                             })
@@ -2420,14 +3114,20 @@ def _scan_phase1(
                                     "text/html" in str(landing_content_type).lower()
                                     or "<html" in landing_html[:5000].lower()
                                 ):
+                                    landing_final_url = str(landing_response.url or auth_final_url)
                                     post_auth_pages.append({
                                         "url": auth_final_url,
-                                        "final_url": str(landing_response.url or auth_final_url),
+                                        "final_url": landing_final_url,
                                         "status_code": int(getattr(landing_response, "status_code", 0) or 0),
                                         "content_type": landing_content_type,
                                         "html": landing_html,
                                         "forms": [],
-                                        "classification": "protected",
+                                        "classification": classify_discovery_url(
+                                            auth_final_url,
+                                            landing_final_url,
+                                            landing_response,
+                                            baseline=_post_auth_baseline,
+                                        ),
                                         "discovery_context": "post_login",
                                         "is_new_post_login": True,
                                     })
@@ -2463,7 +3163,7 @@ def _scan_phase1(
                     if post_results:
                         all_results.extend(normalize_results("Discovery post-login", post_results))
 
-                    protected_hint_tokens = ["admin", "dashboard", "backoffice", "private", "restauranteadministracion"]
+                    protected_hint_tokens = ["admin", "dashboard", "backoffice", "private"]
                     protected_classifications = {
                         "protected",
                         "admin_candidate",
@@ -2537,6 +3237,8 @@ def _scan_phase1(
         )]))
 
     discovered_urls = discovered_entries_to_urls(discovery.get("discovered") or [])
+    if prefetched_web_chain:
+        discovered_urls = list(dict.fromkeys(discovered_urls + (prefetched_web_chain.get("httpx_active_urls") or [])))
 
     runtime_candidates = [
         page for page in pages
@@ -2577,6 +3279,8 @@ def _scan_phase1(
     )
 
     nmap_structured = {"hosts": []}
+    nessus_structured = {"scan_id": None, "vulnerabilities": []}
+    _all_cves_found: list = []  # flat CVE list for exploit suggester
     external_hosts = external_targets.get("hosts", [])
     candidate_targets = []
     external_target_limit = _compute_external_target_limit(
@@ -2621,12 +3325,12 @@ def _scan_phase1(
         all_results.extend(normalize_results("Nmap reconnaissance", nmap_rows))
 
         parity_enabled = bool(st.session_state.get("_parity_nmap_nessus", False))
-        if parity_enabled or str(nmap_profile or "").upper() in {"DEEP", "AGGRESSIVE"}:
+        if parity_enabled or str(nmap_profile or "").upper() in {"DEEP", "AGGRESSIVE", "KALI_FULL"}:
             with st.spinner("Correlando CVEs por servicios/versiones detectados por Nmap..."):
                 nmap_cve_rows, nmap_cves = _collect_nmap_service_cves(
                     nmap_structured,
-                    max_services=10 if parity_enabled else 6,
-                    max_cves_per_service=4,
+                    max_services=18 if parity_enabled else 12,
+                    max_cves_per_service=10,
                 )
             if nmap_cve_rows:
                 all_results.extend(normalize_results("Correlación CVE (Nmap)", nmap_cve_rows))
@@ -2647,9 +3351,6 @@ def _scan_phase1(
                 f"[NMAP] Completado | Último host: {_nmap_host} | Detalle: {_nmap_detail[:120]}"
             )
 
-    nessus_structured = {"scan_id": None, "vulnerabilities": []}
-    _all_cves_found: list = []  # flat CVE list for exploit suggester
-    
     # Execute vulnerability scanning (Nessus or Free Scanner)
     if enable_nessus and external_target_limit > 0:
         nessus_status = st.empty()
@@ -2771,16 +3472,41 @@ def _scan_phase1(
     all_results.extend(normalize_results("Correlación IA ofensiva", [contract_to_result(ai_contract)]))
 
     if _all_cves_found:
-        cve_best = {}
-        for cve in _all_cves_found:
-            cve_id = str(cve.get("id") or "").strip().upper()
-            if not cve_id.startswith("CVE-"):
-                continue
-            score = float(cve.get("score", 0) or 0)
-            current = cve_best.get(cve_id)
-            if current is None or score > float(current.get("score", 0) or 0):
-                cve_best[cve_id] = dict(cve)
-        _all_cves_found = list(cve_best.values())
+        _all_cves_found = _dedupe_cves_by_best_score(_all_cves_found)
+
+        try:
+            with st.spinner("Enriqueciendo CVEs con inteligencia pública (EPSS/KEV)..."):
+                _all_cves_found, _cve_intel_summary = enrich_cves_with_free_intel(
+                    _all_cves_found,
+                    timeout=7.0,
+                )
+            all_results.extend(normalize_results("Inteligencia CVE abierta", _build_cve_intel_rows(
+                _all_cves_found,
+                _cve_intel_summary,
+            )))
+
+            actionable = _select_actionable_cves(_all_cves_found)
+            all_results.extend(normalize_results("Inteligencia CVE abierta", [{
+                "control": "Filtro de CVEs accionables",
+                "status": "Comprobado",
+                "severity": "Informativa",
+                "description": "Se filtran CVEs a los realmente priorizables para validación ofensiva.",
+                "evidence": (
+                    f"CVEs totales enriquecidos: {len(_all_cves_found)} | "
+                    f"CVEs accionables: {len(actionable)}"
+                ),
+                "recommendation": "Concentrar pruebas en KEV, EPSS alto y CVSS>=7 con afectación probable.",
+            }]))
+            _all_cves_found = actionable
+        except Exception:
+            all_results.extend(normalize_results("Inteligencia CVE abierta", [{
+                "control": "Inteligencia CVE abierta (EPSS + KEV)",
+                "status": "No probado",
+                "severity": "Informativa",
+                "description": "No se pudo completar el enriquecimiento externo de CVEs.",
+                "evidence": traceback.format_exc()[:260],
+                "recommendation": "Verificar salida a Internet/proxy y reintentar para mejorar priorización.",
+            }]))
 
     all_results.extend(run_module("Validando TLS/HTTPS...", "TLS/HTTPS", scan_tls, target_url))
     all_results.extend(run_module("Analizando cabeceras...", "Cabeceras de seguridad", scan_security_headers, target_url, auth_client))
@@ -2793,6 +3519,42 @@ def _scan_phase1(
     all_results.extend(run_module("Analizando formularios...", "Formularios", scan_forms_from_pages, pages))
     all_results.extend(run_module("Analizando CSRF...", "CSRF", scan_csrf_from_pages, pages))
     all_results.extend(run_module("Fingerprinting avanzado de tecnologías...", "Fingerprinting avanzado", scan_technology_fingerprint, target_url, pages))
+
+    # Optional external OSS cascade (Katana -> Feroxbuster -> Nmap -> Nuclei) with strict dedup.
+    try:
+        external_auth_params = _build_external_auth_params(auth_status, auth_cookies)
+        external_fuzz_wordlist = str(os.getenv("EXTERNAL_FUZZ_WORDLIST", "") or "").strip()
+        with st.spinner("Ejecutando pipeline externo (Katana/Fuzzing/HTTPX/Nuclei)..."):
+            external_pipeline = run_external_tools_pipeline(
+                target_url=target_url,
+                existing_results=all_results,
+                depth=free_scanner_depth,
+                nmap_path=nmap_bin or "",
+                run_nmap_stage=not bool(enable_nmap),
+                prefetched_web_chain=prefetched_web_chain,
+                auth_params=external_auth_params,
+                fuzz_wordlist_path=external_fuzz_wordlist,
+            )
+        external_rows = external_pipeline.get("rows") or []
+        if external_rows:
+            all_results.extend(normalize_results("Pipeline externo OSS", external_rows))
+
+        external_nuclei_cves = _collect_cves_from_external_nuclei_findings(
+            external_pipeline.get("nuclei_findings") or []
+        )
+        if external_nuclei_cves:
+            _all_cves_found = _dedupe_cves_by_best_score(_all_cves_found + external_nuclei_cves)
+            _all_cves_found = _select_actionable_cves(_all_cves_found) or _all_cves_found
+    except Exception:
+        all_results.extend(normalize_results("Pipeline externo OSS", [{
+            "control": "Orquestación Katana/Ferox/Nmap/Nuclei",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "No se pudo ejecutar el pipeline externo en esta ejecución.",
+            "evidence": traceback.format_exc()[:260],
+            "recommendation": "Verificar binarios locales y PATH para herramientas externas.",
+        }]))
+
     all_results.extend(normalize_results("Inteligencia ofensiva", build_attack_path_intel(
         all_results=all_results,
         discovered_urls=discovered_urls,
@@ -2895,6 +3657,7 @@ def _render_phase1_summary(state):
             "sensitive_candidate",
         }
     ]
+    post_login_endpoint_hints = _collect_post_login_candidate_endpoints(display_post_login)
 
     st.markdown("---")
     st.markdown("### Fase 1 completada — Superficie descubierta")
@@ -2949,7 +3712,8 @@ def _render_phase1_summary(state):
     if use_auth:
         st.markdown(
             f"**Cobertura post-login:** {len(display_post_login)} URL(s) relevantes en sesión autenticada | "
-            f"Rutas protegidas/candidatas: {len(post_login_protected)}"
+            f"Rutas protegidas/candidatas: {len(post_login_protected)} | "
+            f"Endpoints candidatos: {len(post_login_endpoint_hints)}"
         )
         if display_post_login:
             with st.expander("Ver URLs descubiertas post-login", expanded=False):
@@ -2962,6 +3726,10 @@ def _render_phase1_summary(state):
                     )
                 if len(display_post_login) > 30:
                     st.caption(f"… y {len(display_post_login) - 30} más")
+        if post_login_endpoint_hints:
+            with st.expander("Ver endpoints candidatos descubiertos tras login", expanded=False):
+                for endpoint in post_login_endpoint_hints:
+                    st.markdown(f"- `{endpoint}`")
 
 
 def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_url, auth_final_url, auth_cookies, pages, all_results):
@@ -3002,10 +3770,12 @@ def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_ur
             "sensitive_candidate",
         }
     ]
+    post_login_endpoint_hints = _collect_post_login_candidate_endpoints(display_post_login)
 
     st.caption(
         f"URLs post-login descubiertas: {len(display_post_login)} | "
-        f"Rutas protegidas/candidatas: {len(protected_post_login)}"
+        f"Rutas protegidas/candidatas: {len(protected_post_login)} | "
+        f"Endpoints candidatos: {len(post_login_endpoint_hints)}"
     )
 
     if display_post_login:
@@ -3021,6 +3791,11 @@ def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_ur
                 )
             if len(display_post_login) > 40:
                 st.caption(f"… y {len(display_post_login) - 40} más")
+
+    if post_login_endpoint_hints:
+        with st.expander("Endpoints candidatos descubiertos en sesión autenticada", expanded=False):
+            for endpoint in post_login_endpoint_hints:
+                st.markdown(f"- `{endpoint}`")
 
     coverage_row = next(
         (
@@ -3106,6 +3881,14 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     all_results = list(state["all_results"])
 
     _render_phase1_summary(state)
+
+    st.markdown("### CVEs detectados (priorizados y explotables)")
+    _render_cve_findings_panel(
+        cves=state.get("all_cves_found") or [],
+        target_url=target_url,
+        enable_exploit_ai=bool(st.session_state.get("_enable_exploit_ai", True)),
+        exploit_ai_model=str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3"),
+    )
 
     # ── Targets detail before confirming attack ──────────────────────────
     attackable_pages_preview = state.get("attackable_pages") or []
@@ -3421,12 +4204,15 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
 
     # ── Agente IA – Propuesta de Exploits ───────────────────────────────────
     _cves_for_exploits = list(state.get("all_cves_found") or [])
+    _cves_fallback_from_results = _collect_cves_from_results_rows(all_results)
+    if _cves_fallback_from_results:
+        _cves_for_exploits = _dedupe_cves_by_best_score(_cves_for_exploits + _cves_fallback_from_results)
     _exploit_ai_enabled = bool(st.session_state.get("_enable_exploit_ai", True))
     _exploit_ai_model = str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3")
 
     if _cves_for_exploits and _exploit_ai_enabled:
         try:
-            from scanner.exploit_suggester import build_exploit_suggestions, format_suggestions_for_display
+            from scanner.exploit_suggester import build_exploit_suggestions
             with st.spinner("Agente IA analizando CVEs y generando propuestas de exploits..."):
                 exploit_suggestions = build_exploit_suggestions(
                     cves=_cves_for_exploits,
@@ -3438,54 +4224,10 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             st.session_state["last_exploit_suggestions"] = exploit_suggestions
 
             if exploit_suggestions:
-                st.markdown("---")
-                st.subheader(f"🤖 Agente IA – Propuesta de Exploits ({len(exploit_suggestions)} CVEs analizados)")
-
-                # Summary metrics
-                _crit = sum(1 for s in exploit_suggestions if s.get("severity") == "critical")
-                _high = sum(1 for s in exploit_suggestions if s.get("severity") == "high")
-                _ai_used = sum(1 for s in exploit_suggestions if s.get("ai_used"))
-                _ec1, _ec2, _ec3, _ec4 = st.columns(4)
-                _ec1.metric("CVEs analizados", len(exploit_suggestions))
-                _ec2.metric("Críticos / Altos", f"{_crit} / {_high}")
-                _ec3.metric("Enriquecidos con IA", _ai_used)
-                _ec4.metric("Modo IA", _exploit_ai_model if _ai_used else "Offline")
-
-                for sug in exploit_suggestions:
-                    _sev = sug.get("severity", "info")
-                    _sev_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(_sev, "⚪")
-                    _ai_badge = " · **[IA]**" if sug.get("ai_used") else ""
-                    _title = f"{_sev_color} **{sug['cve_id']}** (CVSS {sug['score']:.1f}) – {sug['family']}{_ai_badge}"
-                    with st.expander(_title, expanded=(_sev in ("critical", "high"))):
-                        col_l, col_r = st.columns(2)
-                        with col_l:
-                            st.markdown(f"**Servicio**: `{sug.get('service','')} {sug.get('version','')}`.strip()")
-                            st.markdown(f"**Técnica**: {sug.get('technique','')}")
-                            st.markdown(f"**Vector**: {sug.get('vector','')}")
-                            if sug.get("msf_hint"):
-                                st.code(sug["msf_hint"], language="bash")
-                        with col_r:
-                            st.markdown(f"**Remediación**: {sug.get('remediation','')}")
-                            if sug.get("description"):
-                                st.caption(sug["description"][:250])
-
-                        if sug.get("ai_analysis"):
-                            _ai = sug["ai_analysis"]
-                            if _ai.get("resumen"):
-                                st.info(f"**Análisis IA**: {_ai['resumen']}")
-                            if _ai.get("pasos_explotacion"):
-                                st.markdown("**Pasos de explotación (IA):**")
-                                for i, paso in enumerate(_ai["pasos_explotacion"], 1):
-                                    st.markdown(f"{i}. {paso}")
-                            if _ai.get("herramientas_recomendadas"):
-                                st.markdown(f"**Herramientas**: {', '.join(_ai['herramientas_recomendadas'])}")
-                            if _ai.get("nivel_dificultad"):
-                                st.markdown(f"**Dificultad de explotación**: {_ai['nivel_dificultad']}")
-
-                        if sug.get("poc"):
-                            _lang = "html" if sug["poc"].strip().startswith("<") else "python"
-                            st.markdown("**PoC / Plantilla de ataque:**")
-                            st.code(sug["poc"], language=_lang)
+                _render_exploit_suggestions_panel(
+                    exploit_suggestions,
+                    title_suffix=f"— propuesta de exploits ({'IA' if any(s.get('ai_used') for s in exploit_suggestions) else 'offline'})",
+                )
         except Exception as _exp_err:
             st.warning(f"⚠️ Error en agente de exploits: {str(_exp_err)[:200]}")
     elif _exploit_ai_enabled and not _cves_for_exploits:
