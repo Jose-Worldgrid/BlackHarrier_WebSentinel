@@ -3,13 +3,13 @@
   "attack_effectiveness": {
     "unknown": {
       "Cabeceras de seguridad": {
-        "attempts": 193,
+        "attempts": 241,
         "successes": 0,
         "partials": 0,
-        "failures": 193,
+        "failures": 241,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T13:02:52.160593",
+        "last_used": "2026-06-05T09:58:37.940171",
         "payloads_used": [
           {
             "payload": "",
@@ -1168,17 +1168,305 @@
             "result": "Baja",
             "reason": "Ausencia de Permissions-Policy.",
             "timestamp": "2026-06-02T13:02:52.160601"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-06-02T13:18:22.688402"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-06-02T13:18:22.693747"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-02T13:18:22.699147"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-02T13:18:22.704206"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-02T13:18:22.709341"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-02T13:18:22.714102"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-06-03T09:53:43.486774"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-06-03T09:53:43.502507"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-03T09:53:43.511157"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-03T09:53:43.526757"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-03T09:53:43.537057"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-03T09:53:43.550821"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-06-03T11:11:39.635028"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-06-03T11:11:39.649243"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-03T11:11:39.662464"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-03T11:11:39.670729"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-03T11:11:39.683110"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-03T11:11:39.694754"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-06-03T11:36:53.497834"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-06-03T11:36:53.505879"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-03T11:36:53.516543"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-03T11:36:53.526935"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-03T11:36:53.535573"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-03T11:36:53.545943"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-06-03T12:36:32.840085"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-06-03T12:36:32.848909"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-03T12:36:32.857260"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-03T12:36:32.867354"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-03T12:36:32.877922"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-03T12:36:32.887356"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de HSTS. El sitio puede ser vulnerable a downgrade o interceptación.",
+            "timestamp": "2026-06-03T12:57:28.096324"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Ausencia de Content Security Policy. Aumenta el riesgo de XSS y carga de recursos no autorizados.",
+            "timestamp": "2026-06-03T12:57:28.122399"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-03T12:57:28.146777"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-03T12:57:28.170048"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-03T12:57:28.187783"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-03T12:57:28.209279"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-04T11:19:08.424718"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-04T11:19:08.440354"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-04T11:19:08.453430"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-04T11:19:08.464902"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-04T12:42:47.045626"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-04T12:42:47.062827"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-04T12:42:47.083640"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-04T12:42:47.098506"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-05T09:58:37.914138"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-05T09:58:37.923788"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-05T09:58:37.930822"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-05T09:58:37.940186"
           }
         ]
       },
       "Puertos y servicios": {
-        "attempts": 30,
+        "attempts": 37,
         "successes": 0,
         "partials": 0,
-        "failures": 30,
+        "failures": 37,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T13:02:51.947133",
+        "last_used": "2026-06-05T09:58:37.613576",
         "payloads_used": [
           {
             "payload": "",
@@ -1359,17 +1647,59 @@
             "result": "Media",
             "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
             "timestamp": "2026-06-02T13:02:51.947145"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-02T13:18:22.512738"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-03T09:53:43.025176"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-03T11:11:39.278904"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-03T11:36:53.161293"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-03T12:36:32.373941"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-03T12:57:27.448311"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-05T09:58:37.613597"
           }
         ]
       },
       "Correlación de vulnerabilidades": {
-        "attempts": 149,
+        "attempts": 203,
         "successes": 0,
         "partials": 0,
-        "failures": 149,
+        "failures": 203,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T13:02:51.979349",
+        "last_used": "2026-06-05T09:58:37.671804",
         "payloads_used": [
           {
             "payload": "",
@@ -2264,17 +2594,341 @@
             "result": "Baja",
             "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
             "timestamp": "2026-06-02T13:02:51.979360"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-06-02T13:18:22.517708"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-06-02T13:18:22.523955"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-02T13:18:22.531420"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-02T13:18:22.536852"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-02T13:18:22.542093"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-02T13:18:22.547059"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-06-03T09:53:43.042430"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-06-03T09:53:43.057436"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-03T09:53:43.073943"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-03T09:53:43.084458"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-03T09:53:43.096682"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-03T09:53:43.107180"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-06-03T11:11:39.288030"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-06-03T11:11:39.300294"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-03T11:11:39.310636"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-03T11:11:39.320175"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-03T11:11:39.329249"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-03T11:11:39.354714"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-06-03T11:36:53.170285"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-06-03T11:36:53.183175"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-03T11:36:53.194071"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-03T11:36:53.202132"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-03T11:36:53.218870"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-03T11:36:53.229961"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-06-03T12:36:32.387830"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-06-03T12:36:32.407365"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-03T12:36:32.438376"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-03T12:36:32.473598"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-03T12:36:32.496712"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-03T12:36:32.519071"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "HSTS no configurado — riesgo de downgrade HTTP y MITM",
+            "timestamp": "2026-06-03T12:57:27.463564"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Content-Security-Policy ausente — sin protección contra XSS y data injection",
+            "timestamp": "2026-06-03T12:57:27.482596"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-03T12:57:27.504164"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-03T12:57:27.529009"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-03T12:57:27.553109"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-03T12:57:27.571558"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-04T11:19:08.014596"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-04T11:19:08.032740"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-04T11:19:08.046352"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-04T11:19:08.061632"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-04T11:19:08.075222"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-04T11:19:08.090661"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-04T12:42:46.578484"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-04T12:42:46.594863"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-04T12:42:46.609143"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-04T12:42:46.623785"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-04T12:42:46.644274"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-04T12:42:46.663279"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-05T09:58:37.624191"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-05T09:58:37.634694"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-05T09:58:37.643474"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-05T09:58:37.650358"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-05T09:58:37.661308"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-05T09:58:37.671821"
           }
         ]
       },
       "Red e infraestructura": {
-        "attempts": 22,
+        "attempts": 28,
         "successes": 0,
         "partials": 0,
-        "failures": 22,
+        "failures": 28,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T13:02:51.941386",
+        "last_used": "2026-06-03T12:57:27.429509",
         "payloads_used": [
           {
             "payload": "",
@@ -2407,17 +3061,53 @@
             "result": "Media",
             "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
             "timestamp": "2026-06-02T13:02:51.941406"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-06-02T13:18:22.505444"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-06-03T09:53:43.012492"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-06-03T11:11:39.267974"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-06-03T11:36:53.150920"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-06-03T12:36:32.365012"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Cabeceras HTTP revelan tecnologías y versiones del servidor.",
+            "timestamp": "2026-06-03T12:57:27.429666"
           }
         ]
       },
       "TLS/HTTPS": {
-        "attempts": 2,
+        "attempts": 5,
         "successes": 0,
         "partials": 0,
-        "failures": 2,
+        "failures": 5,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-05-19T12:49:47.070533",
+        "last_used": "2026-06-05T09:58:37.905437",
         "payloads_used": [
           {
             "payload": "",
@@ -2430,17 +3120,35 @@
             "result": "Alta",
             "reason": "El objetivo no usa HTTPS.",
             "timestamp": "2026-05-19T12:49:47.070555"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-04T11:19:08.405730"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-04T12:42:47.029424"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-05T09:58:37.905450"
           }
         ]
       },
       "XSS DOM": {
-        "attempts": 14,
+        "attempts": 29,
         "successes": 0,
         "partials": 0,
-        "failures": 14,
+        "failures": 29,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T10:52:23.019933",
+        "last_used": "2026-06-05T09:58:38.025163",
         "payloads_used": [
           {
             "payload": "",
@@ -2525,17 +3233,107 @@
             "result": "Alta",
             "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
             "timestamp": "2026-06-02T10:52:23.019945"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-04T11:19:08.478021"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-04T11:19:08.487627"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-04T11:19:08.500256"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-04T11:19:08.511793"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-04T11:19:08.521194"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-04T12:42:47.111622"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-04T12:42:47.124698"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-04T12:42:47.138363"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-04T12:42:47.149200"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-04T12:42:47.161736"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-05T09:58:37.979655"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-05T09:58:37.989004"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-05T09:58:37.996916"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-05T09:58:38.007713"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-05T09:58:38.025182"
           }
         ]
       },
       "Exposición de dependencias": {
-        "attempts": 4,
+        "attempts": 16,
         "successes": 0,
         "partials": 0,
-        "failures": 4,
+        "failures": 16,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-05-18T09:28:43.203105",
+        "last_used": "2026-06-05T09:58:38.064105",
         "payloads_used": [
           {
             "payload": "",
@@ -2560,17 +3358,89 @@
             "result": "Alta",
             "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
             "timestamp": "2026-05-18T09:28:43.203114"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T11:19:08.533531"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T11:19:08.546099"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T11:19:08.555715"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T11:19:08.567319"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T12:42:47.174975"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T12:42:47.183889"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T12:42:47.199985"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-04T12:42:47.211318"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-05T09:58:38.033828"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-05T09:58:38.044445"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-05T09:58:38.055929"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-05T09:58:38.064121"
           }
         ]
       },
       "Aseguramiento ofensivo": {
-        "attempts": 4,
+        "attempts": 7,
         "successes": 0,
         "partials": 0,
-        "failures": 4,
+        "failures": 7,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T10:52:23.025701",
+        "last_used": "2026-06-05T09:58:38.074246",
         "payloads_used": [
           {
             "payload": "",
@@ -2595,6 +3465,24 @@
             "result": "Alta",
             "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
             "timestamp": "2026-06-02T10:52:23.025718"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-04T11:19:08.578053"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-04T12:42:47.222427"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-05T09:58:38.074265"
           }
         ]
       },
@@ -2692,13 +3580,13 @@
         ]
       },
       "Inteligencia CVE abierta": {
-        "attempts": 134,
+        "attempts": 349,
         "successes": 0,
         "partials": 0,
-        "failures": 134,
+        "failures": 349,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T13:02:52.125000",
+        "last_used": "2026-06-05T09:58:37.898809",
         "payloads_used": [
           {
             "payload": "",
@@ -3503,6 +4391,1296 @@
             "result": "Media",
             "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
             "timestamp": "2026-06-02T13:02:52.125008"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.555330"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.561296"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.566458"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.571764"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.576721"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.581292"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.585797"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.592127"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.596989"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.601452"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.607044"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.611870"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.617004"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.622549"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.628515"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.633518"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.639484"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.644369"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.648855"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.653895"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.659732"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.664984"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.671031"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.677272"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-02T13:18:22.682983"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.119078"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.132308"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.147386"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.163644"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.179421"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.206691"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.219529"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.239205"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.254971"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.273453"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.286888"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.301065"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.314120"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.323995"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.338839"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.352268"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.364438"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.377231"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.391513"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.406108"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.420234"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.434398"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.448404"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.464577"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T09:53:43.476581"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.365270"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.374498"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.384282"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.393835"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.401404"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.414570"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.422681"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.433739"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.442546"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.452003"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.465597"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.476506"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.489398"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.502586"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.515873"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.526965"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.548308"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.556225"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.565350"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.573756"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.582648"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.592739"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.601496"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.609850"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:11:39.621728"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.240326"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.250104"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.260689"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.270584"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.281014"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.291337"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.302446"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.312419"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.321851"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.331710"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.341878"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.350586"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.361436"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.370207"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.381226"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.394299"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.406872"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.417626"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.429982"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.441187"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.450730"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.459687"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.468616"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.479046"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T11:36:53.488034"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.536228"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.548773"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.559792"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.574012"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.588001"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.599923"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.612210"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.621979"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.634196"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.645992"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.657400"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.670125"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.682707"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.695639"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.714203"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.742125"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.752652"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.763086"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.773303"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.785073"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.795800"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.804696"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.813050"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.822265"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:36:32.831481"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.594337"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.612227"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.626837"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.648598"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.668280"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.686981"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.705135"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.725652"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.746594"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.764099"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.781336"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.798414"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.817710"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.838906"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.859052"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.878769"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.895879"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.918327"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.939673"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.959608"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:27.981493"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:28.001188"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:28.026444"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:28.048293"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-03T12:57:28.073142"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.105170"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.120485"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.134259"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.148838"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.163620"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.177773"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.191533"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.207226"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.223642"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.240536"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.259217"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.276587"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.293471"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.308830"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.323691"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.338495"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.351576"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.363719"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.375900"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T11:19:08.392230"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.682122"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.703096"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.723325"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.739133"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.758162"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.777228"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.793387"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.811366"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.829625"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.844364"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.858391"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.872425"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.894039"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.909295"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.930830"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.944566"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.960789"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.977508"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:46.993146"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-04T12:42:47.014270"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.682341"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.691782"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.701621"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.709363"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.719367"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.728662"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.737129"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.746463"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.755386"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.763945"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.771565"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.778662"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.788474"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.798231"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.807126"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.814677"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.823126"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.831028"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.841088"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.848828"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.859163"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.869225"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.879222"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.888918"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-05T09:58:37.898828"
           }
         ]
       },
@@ -3536,13 +5714,13 @@
         ]
       },
       "Pipeline externo OSS": {
-        "attempts": 39,
+        "attempts": 42,
         "successes": 0,
         "partials": 0,
-        "failures": 39,
+        "failures": 42,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-02T13:02:52.232314",
+        "last_used": "2026-06-05T09:58:37.969435",
         "payloads_used": [
           {
             "payload": "",
@@ -3777,6 +5955,24 @@
             "result": "Informativa",
             "reason": "Hallazgo detectado por template externo de seguridad.",
             "timestamp": "2026-06-02T13:02:52.232324"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-05T09:58:37.949927"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-05T09:58:37.959775"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-05T09:58:37.969452"
           }
         ]
       }
@@ -3790,14 +5986,14 @@
       "filters": [],
       "waf_types": [],
       "attack_results": {},
-      "last_scanned": "2026-06-02T13:02:51.928734"
+      "last_scanned": "2026-06-03T12:57:27.392112"
     },
     "http://a45b012245f704cdf8ba0d06fbc6578c-296074868.us-east-1.elb.amazonaws.com/login": {
       "frameworks": {},
       "filters": [],
       "waf_types": [],
       "attack_results": {},
-      "last_scanned": "2026-05-18T09:28:43.151004"
+      "last_scanned": "2026-06-05T09:58:37.600540"
     },
     "https://glutenzero.es/es": {
       "frameworks": {},

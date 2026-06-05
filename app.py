@@ -3,6 +3,7 @@ import os
 import re
 import traceback
 import concurrent.futures
+import ipaddress
 from urllib.parse import urlparse, urljoin
 from datetime import datetime
 from requests.utils import dict_from_cookiejar
@@ -52,6 +53,11 @@ from scanner.cve_lookup import CVELookup
 from scanner.cve_intel import enrich_cves_with_free_intel
 from scanner.external_tools_pipeline import run_external_tools_pipeline, verificar_endpoints_httpx
 from scanner.tool_detection import detect_external_web_tools
+from scanner.kali_processing import (
+    build_login_db_intel_rows,
+    build_kali_procedure_rows,
+    run_kali_quick_fingerprint,
+)
 from scanner.offensive_intel import (
     collect_external_scan_targets,
     build_ai_recon_contract,
@@ -158,6 +164,10 @@ def _auto_detect_login_url(target_url, client, max_pages=80):
         url = str(page.get("final_url") or page.get("url") or "")
         if not url:
             continue
+        if is_blocked_or_error_page(page):
+            continue
+        if _looks_like_not_found_page(page):
+            continue
         checked += 1
 
         lower_url = url.lower()
@@ -212,8 +222,13 @@ def _collect_login_candidates(target_url, pages, manual_login_url=""):
         url = str(page.get("final_url") or page.get("url") or "").strip()
         if not url:
             continue
+        if is_blocked_or_error_page(page) or _looks_like_not_found_page(page):
+            continue
         lower_url = url.lower()
         classification = str(page.get("classification") or "").lower()
+        status = _safe_status_int(page.get("status_code"))
+        if status in {0, 404}:
+            continue
         has_auth_hint = "auth" in classification or any(x in lower_url for x in auth_markers)
         has_reg_hint = "registration" in classification or any(x in lower_url for x in reg_markers)
         if has_auth_hint and not has_reg_hint:
@@ -281,6 +296,119 @@ def _build_external_auth_params(auth_status, auth_cookies):
     }
 
 
+def _extract_cookie_details_from_jar(cookie_jar, max_items=24):
+    details = []
+    seen = set()
+
+    for cookie in cookie_jar or []:
+        name = str(getattr(cookie, "name", "") or "").strip()
+        if not name or name in seen:
+            continue
+
+        seen.add(name)
+        rest = getattr(cookie, "_rest", {}) or {}
+        same_site = str(rest.get("SameSite") or rest.get("samesite") or "").strip()
+        http_only = bool(
+            rest.get("HttpOnly")
+            or rest.get("httponly")
+            or ("HttpOnly" in rest)
+            or ("httponly" in rest)
+        )
+
+        details.append({
+            "name": name,
+            "value": str(getattr(cookie, "value", "") or ""),
+            "domain": str(getattr(cookie, "domain", "") or ""),
+            "path": str(getattr(cookie, "path", "") or "/"),
+            "secure": bool(getattr(cookie, "secure", False)),
+            "http_only": http_only,
+            "same_site": same_site or "-",
+            "expires": int(getattr(cookie, "expires", 0) or 0),
+        })
+
+        if len(details) >= max_items:
+            break
+
+    return details
+
+
+def _merge_cookie_maps(*cookie_maps):
+    merged = {}
+    for cookie_map in cookie_maps or []:
+        for key, value in (cookie_map or {}).items():
+            name = str(key or "").strip()
+            if not name:
+                continue
+            merged[name] = str(value or "")
+    return merged
+
+
+def _merge_cookie_details(*cookie_detail_sets, max_items=24):
+    merged = []
+    seen = set()
+    for detail_set in cookie_detail_sets or []:
+        for item in detail_set or []:
+            name = str((item or {}).get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            merged.append(dict(item))
+            if len(merged) >= max_items:
+                return merged
+    return merged
+
+
+def _build_cookie_details_fallback(auth_cookies, max_items=24):
+    details = []
+    for name in sorted((auth_cookies or {}).keys()):
+        key = str(name or "").strip()
+        if not key:
+            continue
+        value = str((auth_cookies or {}).get(name) or "")
+        details.append({
+            "name": key,
+            "value": value,
+            "domain": "",
+            "path": "/",
+            "secure": False,
+            "http_only": False,
+            "same_site": "-",
+            "expires": 0,
+        })
+        if len(details) >= max_items:
+            break
+    return details
+
+
+def _render_cookie_capture_panel(auth_cookie_details, auth_cookies=None, *, max_items=24):
+    details = list(auth_cookie_details or [])
+    if not details and auth_cookies:
+        details = _build_cookie_details_fallback(auth_cookies, max_items=max_items)
+
+    if not details:
+        return
+
+    with st.expander("Cookies de sesión capturadas (validación controlada)", expanded=False):
+        safe_rows = []
+        replay_pairs = []
+        for cookie in details[:max_items]:
+            name = str(cookie.get("name") or "")
+            value = str(cookie.get("value") or "")
+            replay_pairs.append(f"{name}={value}")
+            safe_rows.append({
+                "name": name,
+                "value_preview": (value[:12] + "...") if len(value) > 15 else value,
+                "domain": cookie.get("domain") or "",
+                "path": cookie.get("path") or "/",
+                "secure": bool(cookie.get("secure")),
+                "http_only": bool(cookie.get("http_only")),
+                "same_site": cookie.get("same_site") or "-",
+            })
+        st.dataframe(pd.DataFrame(safe_rows), width="stretch")
+        st.markdown("**Cookie header para replay de sesión (entorno autorizado):**")
+        st.code("; ".join(replay_pairs), language="bash")
+
+
 def _extract_post_login_route_hints(target_url, pages, max_hints=60):
     """Extract likely authenticated routes from HTML/runtime/forms without hardcoding app-specific paths."""
     base = urlparse(str(target_url or "").strip())
@@ -290,11 +418,12 @@ def _extract_post_login_route_hints(target_url, pages, max_hints=60):
     origin = f"{base.scheme}://{base.netloc}"
     same_host = base.hostname or ""
 
-    route_token = re.compile(r"/(?:[A-Za-z0-9_\-]{2,}/){0,5}[A-Za-z0-9_\-]{2,}(?:\?[A-Za-z0-9_\-=&%]+)?")
-    high_value_tokens = [
-        "admin", "dashboard", "panel", "backoffice", "perfil", "cuenta", "usuario",
-        "account", "settings", "private", "manage", "manager",
-    ]
+    route_token = re.compile(r"/(?:[A-Za-z0-9_\-]{2,}/){0,6}[A-Za-z0-9_\-]{2,}(?:\?[A-Za-z0-9_\-=&%]+)?")
+    static_ext = (
+        ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+        ".woff", ".woff2", ".ttf", ".eot", ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
+    )
+    ignored_query_tokens = ("_rsc=", "utm_", "fbclid=", "gclid=")
 
     discovered = []
     seen = set()
@@ -320,13 +449,22 @@ def _extract_post_login_route_hints(target_url, pages, max_hints=60):
             return
 
         normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path or '/'}"
+        if parsed.query:
+            normalized = f"{normalized}?{parsed.query}"
         if normalized in seen:
             return
-        if len(parsed.path or "") < 3:
+        if len(parsed.path or "") < 2:
             return
 
-        low = normalized.lower()
-        if not any(tok in low for tok in high_value_tokens):
+        low_path = (parsed.path or "").lower()
+        low_query = (parsed.query or "").lower()
+        if low_path.endswith(static_ext):
+            return
+        if any(tok in low_query for tok in ignored_query_tokens):
+            return
+        if any(tok in low_path for tok in ["/login", "/signin", "/auth", "/session"]) and any(
+            tok in low_query for tok in ["redirect=", "next=", "returnurl=", "callbackurl="]
+        ):
             return
 
         seen.add(normalized)
@@ -348,6 +486,138 @@ def _extract_post_login_route_hints(target_url, pages, max_hints=60):
             _add_candidate(form.get("action") or "")
 
     return discovered[:max_hints]
+
+
+_DB_PORT_HINTS = {
+    1433: "Microsoft SQL Server",
+    1521: "Oracle Database",
+    27017: "MongoDB",
+    3306: "MySQL/MariaDB",
+    5432: "PostgreSQL",
+    6379: "Redis",
+    9200: "Elasticsearch",
+    11211: "Memcached",
+}
+
+_DB_SERVICE_HINTS = {
+    "mysql": "MySQL/MariaDB",
+    "mariadb": "MySQL/MariaDB",
+    "postgres": "PostgreSQL",
+    "postgresql": "PostgreSQL",
+    "ms-sql": "Microsoft SQL Server",
+    "mssql": "Microsoft SQL Server",
+    "oracle": "Oracle Database",
+    "mongodb": "MongoDB",
+    "redis": "Redis",
+    "elasticsearch": "Elasticsearch",
+    "memcached": "Memcached",
+}
+
+
+def _db_owner_classification(target_url, host):
+    target = urlparse(str(target_url or ""))
+    base_host = str(target.hostname or "").lower()
+    host_text = str(host or "").strip().lower()
+
+    if not host_text or not base_host:
+        return "unknown"
+    if host_text == base_host or host_text.endswith("." + base_host):
+        return "first_party"
+
+    try:
+        ip_obj = ipaddress.ip_address(host_text)
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+            return "private_network"
+        return "public_ip"
+    except Exception:
+        return "third_party_or_unknown"
+
+
+def _extract_database_assets_from_nmap_structured(target_url, nmap_structured, max_items=60):
+    assets = []
+    seen = set()
+
+    for host in (nmap_structured or {}).get("hosts") or []:
+        host_ip = str(host.get("host") or "").strip()
+        for port_row in host.get("ports") or []:
+            if str(port_row.get("state") or "").lower() != "open":
+                continue
+
+            port = int(port_row.get("port") or 0)
+            service = str(port_row.get("service") or "").strip()
+            product = str(port_row.get("product") or "").strip()
+            version = str(port_row.get("version") or "").strip()
+            protocol = str(port_row.get("protocol") or "tcp").strip() or "tcp"
+            cpes = [str(c).strip() for c in (port_row.get("cpes") or []) if str(c).strip()]
+            cpe_text = ", ".join(cpes[:2])
+
+            blob = " ".join([service.lower(), product.lower(), cpe_text.lower()])
+            db_type = ""
+            for key, label in _DB_SERVICE_HINTS.items():
+                if key in blob:
+                    db_type = label
+                    break
+            if not db_type and port in _DB_PORT_HINTS:
+                db_type = _DB_PORT_HINTS[port]
+            if not db_type:
+                continue
+
+            key = (host_ip, port, protocol, db_type, version)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            assets.append({
+                "db_type": db_type,
+                "host": host_ip,
+                "port": port,
+                "protocol": protocol,
+                "service": service,
+                "product": product,
+                "version": version or "desconocida",
+                "cpe": cpe_text,
+                "owner": _db_owner_classification(target_url, host_ip),
+            })
+
+            if len(assets) >= max_items:
+                return assets
+
+    return assets
+
+
+def _build_database_exposure_rows(database_assets):
+    if not database_assets:
+        return []
+
+    rows = [{
+        "control": "Inventario técnico de BBDD expuestas",
+        "status": "Detectado",
+        "severity": "Alta",
+        "description": "Se consolidó inventario de motores BBDD detectados por red con versión/host/puerto.",
+        "evidence": (
+            f"Motores detectados: {len(set(str(a.get('db_type') or '') for a in database_assets))} | "
+            f"Instancias expuestas: {len(database_assets)}"
+        ),
+        "recommendation": "Priorizar control de acceso por red y parcheo en motores con versión obsoleta o desconocida.",
+    }]
+
+    for item in database_assets[:30]:
+        rows.append({
+            "control": f"BBDD expuesta: {item.get('db_type')}",
+            "status": "Posible hallazgo",
+            "severity": "Alta" if int(item.get("port", 0) or 0) in {1433, 1521, 27017, 3306, 5432, 6379, 9200, 11211} else "Media",
+            "description": "Instancia de base de datos accesible desde superficie de red evaluada.",
+            "evidence": (
+                f"Host/IP: {item.get('host')} | Puerto: {item.get('port')}/{item.get('protocol')} | "
+                f"Motor: {item.get('db_type')} | Producto: {item.get('product') or item.get('service') or '-'} | "
+                f"Versión: {item.get('version') or 'desconocida'} | "
+                f"Ownership: {item.get('owner')}"
+                + (f" | CPE: {item.get('cpe')}" if item.get("cpe") else "")
+            ),
+            "recommendation": "Validar autenticación/cifrado, restringir orígenes y revisar exposición a Internet.",
+        })
+
+    return rows
 
 
 st.markdown("""
@@ -1730,7 +2000,47 @@ def is_blocked_or_error_page(page):
     if any(marker in html_text for marker in blocked_markers):
         return True
 
+    if _looks_like_not_found_page(page):
+        return True
+
     return False
+
+
+def _looks_like_not_found_page(page):
+    status = _safe_status_int(page.get("status_code"))
+    if status == 404:
+        return True
+
+    html_text = " ".join([
+        str(page.get("html", "")),
+        str(page.get("rendered_html", "")),
+        str((page.get("browser_runtime") or {}).get("html", "")),
+    ])[:20000].lower()
+    if not html_text:
+        return False
+
+    strong_not_found_markers = [
+        "this page could not be found",
+        "page not found",
+        "página no encontrada",
+        "pagina no encontrada",
+        "cannot be found",
+        "the page you are looking for",
+    ]
+
+    if not any(marker in html_text for marker in strong_not_found_markers):
+        return False
+
+    # Avoid false negatives on real login pages that still contain 404 words in scripts/assets.
+    if has_auth_form_indicators(page) or _has_password_runtime_indicator(page):
+        return False
+
+    forms_count = len(page.get("forms") or [])
+    url = str(page.get("final_url") or page.get("url") or "").lower()
+    if forms_count > 0 and any(token in url for token in ["/login", "/signin", "/auth", "iniciar-sesion", "inicio-sesion"]):
+        return False
+
+    return True
 
 
 def is_redirected_page(page):
@@ -1859,6 +2169,44 @@ def has_auth_form_indicators(page):
     return has_password and has_user and contextual_auth
 
 
+def _has_password_runtime_indicator(page):
+    runtime_inputs = page.get("browser_inputs") or (page.get("browser_runtime") or {}).get("inputs") or []
+    flat = str(runtime_inputs).lower()
+    return "password" in flat or "contraseña" in flat
+
+
+def _is_verified_auth_login_page(page):
+    if is_blocked_or_error_page(page):
+        return False
+
+    if _looks_like_not_found_page(page):
+        return False
+
+    status = _safe_status_int(page.get("status_code"))
+    if status in {0, 404}:
+        return False
+
+    forms_count = len(page.get("forms") or [])
+    classification = str(page.get("classification", "")).lower()
+    url = str(page.get("final_url") or page.get("url") or "").lower()
+    has_auth_path = any(token in url for token in ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion"])
+
+    if has_auth_form_indicators(page):
+        return True
+
+    if forms_count > 0 and has_auth_path:
+        return True
+
+    if _has_password_runtime_indicator(page) and has_auth_path:
+        return True
+
+    # Keep explicit auth gates (401/403) but avoid generic/empty auth labels with no form evidence.
+    if classification == "auth" and status in {401, 403}:
+        return True
+
+    return False
+
+
 def build_auth_attack_pages(pages):
     auth_keywords = ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion", "session"]
     candidates = []
@@ -1888,12 +2236,90 @@ def build_auth_attack_pages(pages):
         if not is_candidate:
             continue
 
+        if not _is_verified_auth_login_page(page):
+            continue
+
         key = str(page.get("final_url") or page.get("url") or "")
         if key and key not in seen:
             seen.add(key)
             candidates.append(page)
 
-    return candidates
+    def _auth_priority(page):
+        url = str(page.get("final_url") or page.get("url") or "").lower()
+        classification = str(page.get("classification", "")).lower()
+
+        if "/es/login" in url or "/en/login" in url or url.endswith("/login"):
+            return (0, 0)
+        if "login" in url or "signin" in url or "iniciar-sesion" in url or "inicio-sesion" in url:
+            return (0, 1)
+        if classification == "auth":
+            return (1, 0)
+        if classification == "registration" or "register" in url or "registro" in url or "signup" in url:
+            return (2, 0)
+        return (3, 0)
+
+    return sorted(candidates, key=_auth_priority)
+
+
+def _ensure_login_target_first(auth_targets, all_pages, auth_used_login_url, auth_status):
+    targets = list(auth_targets or [])
+    login_url = str(auth_used_login_url or "").strip()
+    status = str(auth_status or "").strip()
+
+    if not login_url or status not in {"Autenticado", "Indeterminado"}:
+        return targets
+
+    login_key = _canonical_surface_url(login_url)
+    if not login_key:
+        return targets
+
+    # Reuse existing page object when possible.
+    selected = None
+    for page in all_pages or []:
+        page_key = _canonical_surface_url(page.get("final_url") or page.get("url") or "")
+        if page_key == login_key:
+            selected = dict(page)
+            break
+
+    if selected is None:
+        selected = {
+            "url": login_url,
+            "final_url": login_url,
+            "classification": "auth",
+            "status_code": 200,
+            "forms": [],
+        }
+
+    # If forced login target has no forms/inputs, borrow evidence from equivalent auth pages.
+    forms_count = len(selected.get("forms") or [])
+    runtime_inputs = selected.get("browser_inputs") or (selected.get("browser_runtime") or {}).get("inputs") or []
+    if forms_count == 0 and not runtime_inputs:
+        auth_like_candidates = []
+        for page in all_pages or []:
+            if is_blocked_or_error_page(page) or _looks_like_not_found_page(page):
+                continue
+            page_url = str(page.get("final_url") or page.get("url") or "").lower()
+            if not any(tok in page_url for tok in ["/login", "/signin", "iniciar-sesion", "inicio-sesion", "/auth"]):
+                continue
+            if has_auth_form_indicators(page) or _has_password_runtime_indicator(page):
+                auth_like_candidates.append(page)
+
+        if auth_like_candidates:
+            best = auth_like_candidates[0]
+            selected["forms"] = list(best.get("forms") or [])
+            if best.get("browser_inputs"):
+                selected["browser_inputs"] = list(best.get("browser_inputs") or [])
+            if best.get("browser_runtime"):
+                selected["browser_runtime"] = dict(best.get("browser_runtime") or {})
+
+    selected["classification"] = str(selected.get("classification") or "auth")
+    selected["auth_target_forced"] = True
+
+    remaining = [
+        p for p in targets
+        if _canonical_surface_url(p.get("final_url") or p.get("url") or "") != login_key
+    ]
+    return [selected] + remaining
 
 
 def is_generic_attack_page(page):
@@ -2037,32 +2463,198 @@ def _is_meaningful_post_login_page(page):
         return False
 
     classification = str(page.get("classification", "")).lower()
-    if classification in {"soft_404", "request_error", "html_candidate", "static_resource"}:
+    if classification in {"soft_404", "request_error", "static_resource"}:
         return False
 
     if _is_static_resource_url(url):
         return False
 
+    if _looks_like_not_found_page(page):
+        return False
+
     return True
 
 
-def _collect_post_login_candidate_endpoints(pages, max_items=30):
-    endpoints = []
-    seen = set()
+def _is_auth_or_registration_url(url):
+    path = urlparse(str(url or "")).path.lower()
+    return any(token in path for token in [
+        "/login", "/signin", "/auth", "/session",
+        "/register", "/signup", "/registro", "crear-cuenta",
+    ])
+
+
+def _filter_verified_post_login_pages(pages, *, target_url="", auth_used_login_url=""):
+    target_key = _canonical_surface_url(target_url)
+    login_key = _canonical_surface_url(auth_used_login_url)
+    filtered = []
 
     for page in pages or []:
+        if not _is_meaningful_post_login_page(page):
+            continue
+
+        final_url = str(page.get("final_url") or page.get("url") or "").strip()
+        final_key = _canonical_surface_url(final_url)
+        classification = str(page.get("classification") or "").lower()
+
+        if not final_key:
+            continue
+        if final_key == target_key or final_key == login_key:
+            continue
+        if classification in {"auth", "registration"}:
+            continue
+        if _is_auth_or_registration_url(final_url):
+            continue
+
+        filtered.append(page)
+
+    return filtered
+
+
+def _collect_post_login_candidate_endpoints(pages, max_items=30, *, target_url=""):
+    endpoints = []
+    seen = set()
+    target_host = str(urlparse(str(target_url or "")).hostname or "").lower()
+    static_ext = (
+        ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+        ".woff", ".woff2", ".ttf", ".eot", ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
+    )
+
+    valid_surface_keys = set()
+    for page in pages or []:
+        final_url = str(page.get("final_url") or page.get("url") or "").strip()
+        if not final_url:
+            continue
+        if _safe_status_int(page.get("status_code")) in {0, 404}:
+            continue
+        if _looks_like_not_found_page(page):
+            continue
+        valid_surface_keys.add(_canonical_surface_url(final_url))
+
+    def _is_noise_endpoint(raw):
+        text = str(raw or "").strip()
+        if not text:
+            return True
+        if not text.startswith(("http://", "https://")):
+            return True
+        parsed = urlparse(text)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return True
+        if target_host and str(parsed.hostname or "").lower() != target_host:
+            return True
+        path = (parsed.path or "").lower()
+        query = (parsed.query or "").lower()
+        if path.endswith(static_ext):
+            return True
+        if "_rsc=" in query:
+            return True
+        if _is_auth_or_registration_url(text):
+            return True
+        if text.lower() in {"unknown_or_api", "unknown", "n/a", "-"}:
+            return True
+        if any(tok in path for tok in ["/login", "/signin", "/auth", "/session"]) and any(
+            tok in query for tok in ["redirect=", "next=", "returnurl=", "callbackurl="]
+        ):
+            return True
+        return False
+
+    def _add_endpoint(value, *, require_known_surface=False):
+        text = str(value or "").strip()
+        if not text or _is_noise_endpoint(text):
+            return
+        norm = _canonical_surface_url(text)
+        if require_known_surface and norm not in valid_surface_keys:
+            return
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        endpoints.append(norm)
+
+    for page in pages or []:
+        if _looks_like_not_found_page(page):
+            continue
+        if _safe_status_int(page.get("status_code")) in {0, 404}:
+            continue
+
         ai_context = page.get("ai_context") or {}
         runtime = page.get("browser_runtime") or {}
         for endpoint in (ai_context.get("candidate_endpoints") or []) + (runtime.get("candidate_endpoints") or []):
-            text = str(endpoint or "").strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            endpoints.append(text)
+            # Runtime/API hints are only accepted if they match a verified discovered surface URL.
+            _add_endpoint(endpoint, require_known_surface=True)
+            if len(endpoints) >= max_items:
+                return endpoints
+
+        page_base = str(page.get("final_url") or page.get("url") or "")
+        for form in (page.get("forms") or []):
+            action = str(form.get("action") or "").strip()
+            if action.startswith("/") and page_base:
+                action = urljoin(page_base, action)
+            _add_endpoint(action, require_known_surface=True)
+            if len(endpoints) >= max_items:
+                return endpoints
+
+        classification = str(page.get("classification") or "").lower()
+        if classification in {"api_candidate", "sensitive_candidate", "admin_candidate", "protected", "protected_redirect_to_auth"}:
+            _add_endpoint(page.get("final_url") or page.get("url") or "")
             if len(endpoints) >= max_items:
                 return endpoints
 
     return endpoints
+
+
+def _collect_verified_http_events(target_url, events, *, max_items=80):
+    target_host = str(urlparse(str(target_url or "")).hostname or "").lower()
+    seen = set()
+    verified = []
+
+    static_ext = (
+        ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+        ".woff", ".woff2", ".ttf", ".eot", ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
+    )
+
+    for event in events or []:
+        method = str(event.get("method") or "").upper().strip()
+        if method not in {"GET", "POST"}:
+            continue
+
+        final_url = str(event.get("final_url") or event.get("url") or "").strip()
+        if not final_url.startswith(("http://", "https://")):
+            continue
+
+        parsed = urlparse(final_url)
+        if target_host and str(parsed.hostname or "").lower() != target_host:
+            continue
+
+        status = int(event.get("status_code", 0) or 0)
+        # Keep actionable/validated responses only.
+        if status not in {200, 201, 202, 204, 301, 302, 303, 307, 308, 401, 403}:
+            continue
+
+        path = (parsed.path or "").lower()
+        query = (parsed.query or "").lower()
+        if path.endswith(static_ext):
+            continue
+        if _is_auth_or_registration_url(final_url):
+            continue
+        if any(tok in query for tok in ["_rsc=", "redirect=", "next=", "returnurl=", "callbackurl="]):
+            continue
+
+        key = (method, _canonical_surface_url(final_url), status)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        verified.append({
+            "method": method,
+            "url": _canonical_surface_url(final_url),
+            "status_code": status,
+            "duration_ms": int(event.get("duration_ms", 0) or 0),
+            "content_type": str(event.get("content_type") or ""),
+        })
+
+        if len(verified) >= max_items:
+            break
+
+    return verified
 
 
 def _discovered_entry_url(entry):
@@ -2601,11 +3193,11 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
     def _collect_validation_commands(item):
         commands = []
         msf_hint = str(item.get("msf_hint") or "").strip()
-        if msf_hint and not _is_generic_placeholder(msf_hint):
+        if msf_hint and not _is_generic_placeholder(msf_hint) and "searchsploit" not in msf_hint.lower():
             commands.append(msf_hint)
         for cmd in item.get("verification_commands") or []:
             cmd_text = str(cmd or "").strip()
-            if cmd_text and cmd_text not in commands:
+            if cmd_text and "searchsploit" not in cmd_text.lower() and cmd_text not in commands:
                 commands.append(cmd_text)
         return commands[:4]
 
@@ -2627,8 +3219,9 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
     for sug in suggestions:
         sev = sug.get("severity", "info")
         sev_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(sev, "⚪")
-        ai_badge = " · **[IA]**" if sug.get("ai_used") else ""
-        title = f"{sev_color} **{sug['cve_id']}** (CVSS {sug['score']:.1f}) – {sug['family']}{ai_badge}"
+        ai_badge = " [IA]" if sug.get("ai_used") else ""
+        vector_txt = _clean_text(sug.get("vector")) or "N/D"
+        title = f"{sev_color} {sug['cve_id']} | CVSS {sug['score']:.1f} | {vector_txt}{ai_badge}"
 
         with st.expander(title, expanded=(sev in ("critical", "high"))):
             service_label = " ".join(
@@ -2636,50 +3229,72 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
                 if part
             ) or "-"
             technique = _clean_text(sug.get("technique"))
-            vector = _clean_text(sug.get("vector"))
             remediation = str(sug.get("remediation") or "").strip()
             validation_cmds = _collect_validation_commands(sug)
 
-            info_cols = st.columns([1.2, 1, 1])
-            info_cols[0].markdown(f"**Qué afecta:** {service_label}")
-            info_cols[1].markdown(f"**Familia:** {sug.get('family', '-')}")
-            info_cols[2].markdown(f"**Vector:** {vector or 'N/D'}")
-
-            if remediation:
-                st.markdown(f"**Remediación recomendada:** {remediation}")
-
-            left, right = st.columns([1.1, 0.9])
+            left, right = st.columns([1.05, 0.95])
             with left:
+                st.markdown(f"**Afecta a:** {service_label} | **Familia:** {sug.get('family', '-')}")
+                if remediation:
+                    st.markdown(f"**Remediación:** {remediation}")
                 if technique:
-                    st.markdown(f"**Técnica de explotación:** {technique}")
+                    st.markdown(f"**Técnica:** {technique}")
+
+                # ── Superficie afectada (ruta + DOM) ──────────────────
+                surface_hits = sug.get("affected_surface") or []
+                if surface_hits:
+                    st.markdown("**Superficie afectada en el objetivo**")
+                    for hit in surface_hits[:4]:
+                        hit_url = str(hit.get("url") or "").strip()
+                        hit_dom = str(hit.get("dom_target") or "").strip()
+                        hit_ctx = str(hit.get("context") or "").strip()
+                        confidence = float(hit.get("confidence", 0))
+                        conf_badge = (
+                            "🔴" if confidence >= 0.80 else
+                            "🟠" if confidence >= 0.65 else
+                            "🟡"
+                        )
+                        if hit_url:
+                            st.markdown(f"{conf_badge} `{hit_url}`")
+                        if hit_dom:
+                            st.caption(f"DOM: {hit_dom}")
+                        if hit_ctx:
+                            st.caption(f"↳ {hit_ctx}")
+
                 if validation_cmds:
-                    st.markdown("**Comandos de validación**")
-                    for cmd in validation_cmds:
+                    st.markdown("**Validación**")
+                    for cmd in validation_cmds[:3]:
                         st.code(cmd, language="bash")
+                if sug.get("ai_analysis"):
+                    ai = sug["ai_analysis"]
+                    if ai.get("resumen"):
+                        st.info(f"**IA:** {ai['resumen'][:220]}...")
+
             with right:
                 if sug.get("description"):
-                    st.caption(sug["description"][:280])
+                    st.caption(f"Descripción: {sug['description'][:220]}...")
+
+                # ── PoC contextualizado con primera URL de superficie ──
+                surface_hits = sug.get("affected_surface") or []
+                best_surface = surface_hits[0] if surface_hits else None
+                st.markdown("**PoC (entorno controlado)**")
+                if best_surface and best_surface.get("url"):
+                    st.caption(
+                        f"Ruta objetivo: `{best_surface['url']}` "
+                        f"— campo: `{best_surface.get('field') or '—'}`"
+                    )
+                if sug.get("poc"):
+                    lang = "html" if str(sug["poc"]).strip().startswith("<") else "python"
+                    st.code(sug["poc"][:1200], language=lang)
+                else:
+                    st.caption("No hay PoC local para este CVE en la base offline.")
                 if sug.get("exploit_links"):
-                    st.markdown("**Referencias de exploit**")
-                    for link in (sug.get("exploit_links") or [])[:4]:
+                    st.markdown("**Referencias**")
+                    for link in (sug.get("exploit_links") or [])[:3]:
                         st.markdown(f"- {link}")
 
-            if sug.get("ai_analysis"):
-                ai = sug["ai_analysis"]
-                if ai.get("resumen"):
-                    st.info(f"**Resumen IA**: {ai['resumen']}")
-                if ai.get("pasos_explotacion"):
-                    st.markdown("**Cómo se explotaría (pasos breves):**")
-                    for i, paso in enumerate(ai["pasos_explotacion"], 1):
-                        st.markdown(f"{i}. {paso}")
 
-            if sug.get("poc"):
-                lang = "html" if str(sug["poc"]).strip().startswith("<") else "python"
-                st.markdown("**PoC / código de explotación (entorno controlado):**")
-                st.code(sug["poc"], language=lang)
-
-
-def _render_cve_findings_panel(*, cves, target_url, enable_exploit_ai, exploit_ai_model, max_items=12):
+def _render_cve_findings_panel(*, cves, target_url, pages=None, enable_exploit_ai, exploit_ai_model, max_items=12):
     actionable = _select_actionable_cves(_dedupe_cves_by_best_score(cves or []))
     if not actionable:
         st.info("No se detectaron CVEs accionables para mostrar en esta ejecución.")
@@ -2697,6 +3312,14 @@ def _render_cve_findings_panel(*, cves, target_url, enable_exploit_ai, exploit_a
         )
     except Exception:
         suggestions = []
+
+    # Enrich with specific routes and DOM context from the discovered surface
+    if suggestions and pages:
+        try:
+            from scanner.surface_cve_mapper import enrich_suggestions_with_surface
+            enrich_suggestions_with_surface(suggestions, pages, target_url=target_url)
+        except Exception:
+            pass
 
     if not suggestions:
         fallback = sorted(
@@ -2722,9 +3345,17 @@ def _render_cve_findings_panel(*, cves, target_url, enable_exploit_ai, exploit_a
                 "verification_commands": [f"searchsploit {str(item.get('id') or '')}"],
                 "ai_analysis": None,
                 "ai_used": False,
+                "affected_surface": [],
             }
             for item in fallback
         ]
+        # Enrich fallback as well
+        if pages:
+            try:
+                from scanner.surface_cve_mapper import enrich_suggestions_with_surface
+                enrich_suggestions_with_surface(suggestions, pages, target_url=target_url)
+            except Exception:
+                pass
 
     _render_exploit_suggestions_panel(suggestions, title_suffix="y explotabilidad")
 
@@ -2869,10 +3500,16 @@ def _scan_phase1(
     # porque no realizan pruebas ofensivas. Esto evita errores con certificados autofirmados.
     _configure_http_defaults_compat(delay=scan_delay, verify_ssl=False, proxy_url=effective_proxy_url)
     auth_client = HttpClient(verify_ssl=False)
+    if hasattr(auth_client, "enable_http_capture"):
+        auth_client.enable_http_capture(True, limit=2000)
     auth_status = "No configurado"
     auth_used_login_url = ""
     auth_final_url = ""
     auth_cookies = {}
+    auth_cookie_details = []
+    auth_cookie_snapshot = {}
+    auth_cookie_details_snapshot = []
+    post_login_http_events = []
 
     st.markdown(
         f"""
@@ -3024,6 +3661,12 @@ def _scan_phase1(
                 auth_used_login_url = candidate
                 if attempt_final_url:
                     auth_final_url = attempt_final_url
+                try:
+                    auth_cookie_snapshot = dict(dict_from_cookiejar(auth_client.session.cookies))
+                    auth_cookie_details_snapshot = _extract_cookie_details_from_jar(auth_client.session.cookies)
+                except Exception:
+                    auth_cookie_snapshot = {}
+                    auth_cookie_details_snapshot = []
                 break
 
             if status == "Indeterminado" and not chosen_indeterminate_client:
@@ -3034,9 +3677,16 @@ def _scan_phase1(
             auth_client = chosen_indeterminate_client
             auth_status = "Indeterminado"
             auth_used_login_url = chosen_indeterminate_url
+            try:
+                auth_cookie_snapshot = dict(dict_from_cookiejar(auth_client.session.cookies))
+                auth_cookie_details_snapshot = _extract_cookie_details_from_jar(auth_client.session.cookies)
+            except Exception:
+                auth_cookie_snapshot = {}
+                auth_cookie_details_snapshot = []
 
         # If auth appears successful (or plausible), run post-auth crawl/discovery to expand protected scope.
         if auth_status in ["Autenticado", "Indeterminado"]:
+            history_start_idx = len(getattr(auth_client, "request_history", []) or [])
             with st.spinner("Sesión establecida. Ejecutando recrawl post-login para descubrir superficie autenticada..."):
                 try:
                     pre_auth_surface_keys = {
@@ -3212,10 +3862,66 @@ def _scan_phase1(
                         recommendation="Validar vigencia de sesión, redirecciones y defensas anti-bot en login.",
                     )]))
 
+            raw_post_login_http_events = (getattr(auth_client, "request_history", []) or [])[history_start_idx:]
+            post_login_http_events = _collect_verified_http_events(
+                target_url,
+                raw_post_login_http_events,
+                max_items=80,
+            )
+            get_count = sum(1 for e in post_login_http_events if e.get("method") == "GET")
+            post_count = sum(1 for e in post_login_http_events if e.get("method") == "POST")
+
+            all_results.extend(normalize_results("Autenticación", [{
+                "control": "Intercepción HTTP autenticada (GET/POST)",
+                "status": "Detectado" if post_login_http_events else "No evidenciado",
+                "severity": "Informativa",
+                "description": "Se registró tráfico HTTP autenticado para validar endpoints reales observados en sesión.",
+                "evidence": (
+                    f"Eventos verificados: {len(post_login_http_events)} | "
+                    f"GET: {get_count} | POST: {post_count}"
+                ),
+                "recommendation": "Usar estos endpoints verificados para pruebas de autorización y replay de sesión en entorno autorizado.",
+            }]))
+
+            for event in post_login_http_events[:15]:
+                all_results.extend(normalize_results("Autenticación", [{
+                    "control": f"HTTP autenticado {event.get('method')} {event.get('url')}",
+                    "status": "Comprobado",
+                    "severity": "Informativa",
+                    "description": "Petición autenticada observada en tráfico real de sesión.",
+                    "evidence": (
+                        f"HTTP {event.get('status_code')} | "
+                        f"Duración: {event.get('duration_ms', 0)} ms | "
+                        f"Content-Type: {event.get('content_type') or '-'}"
+                    ),
+                    "recommendation": "Priorizar esta ruta en validación de control de acceso por rol y pruebas de sesión.",
+                }]))
+
+            all_results.extend(normalize_results("Autenticación", build_login_db_intel_rows(
+                raw_events=raw_post_login_http_events,
+                verified_events=post_login_http_events,
+            )))
+
         try:
-            auth_cookies = dict(dict_from_cookiejar(auth_client.session.cookies))
+            final_auth_cookies = dict(dict_from_cookiejar(auth_client.session.cookies))
+            final_auth_cookie_details = _extract_cookie_details_from_jar(auth_client.session.cookies)
+            auth_cookies = _merge_cookie_maps(auth_cookie_snapshot, final_auth_cookies)
+            auth_cookie_details = _merge_cookie_details(auth_cookie_details_snapshot, final_auth_cookie_details)
         except Exception:
-            auth_cookies = {}
+            auth_cookies = dict(auth_cookie_snapshot or {})
+            auth_cookie_details = list(auth_cookie_details_snapshot or [])
+
+        all_results.extend(normalize_results("Autenticación", [{
+            "control": "Captura de cookies de sesión",
+            "status": "Detectado" if auth_cookie_details else "No evidenciado",
+            "severity": "Media" if auth_cookie_details else "Informativa",
+            "description": "Se capturó metadata de cookies de sesión para validación controlada de secuestro de sesión.",
+            "evidence": (
+                f"Cookies capturadas: {len(auth_cookie_details)} | "
+                f"Nombres: {', '.join([c.get('name', '') for c in auth_cookie_details[:8]]) or 'ninguna'}"
+            ),
+            "recommendation": "Validar flags Secure/HttpOnly/SameSite y reuso de sesión solo en entorno autorizado.",
+        }]))
     elif use_auth:
         all_results.extend(normalize_results("Autenticación", [{
             "control": "Autenticación",
@@ -3555,6 +4261,21 @@ def _scan_phase1(
             "recommendation": "Verificar binarios locales y PATH para herramientas externas.",
         }]))
 
+    # Optional Kali-style quick fingerprint stage (WhatWeb/WAFW00F when available).
+    try:
+        kali_rows = run_kali_quick_fingerprint(target_url)
+        if kali_rows:
+            all_results.extend(normalize_results("Pipeline Kali", kali_rows))
+    except Exception:
+        all_results.extend(normalize_results("Pipeline Kali", [{
+            "control": "Fingerprint Kali rápido",
+            "status": "No probado",
+            "severity": "Informativa",
+            "description": "No se pudo ejecutar el fingerprint rápido estilo Kali.",
+            "evidence": traceback.format_exc()[:260],
+            "recommendation": "Verificar disponibilidad local de whatweb/wafw00f y permisos de ejecución.",
+        }]))
+
     all_results.extend(normalize_results("Inteligencia ofensiva", build_attack_path_intel(
         all_results=all_results,
         discovered_urls=discovered_urls,
@@ -3570,7 +4291,24 @@ def _scan_phase1(
     )
     all_results.extend(normalize_results("Inteligencia de activos", asset_intel_rows))
 
+    database_assets = _extract_database_assets_from_nmap_structured(target_url, nmap_structured)
+    if database_assets:
+        all_results.extend(normalize_results("Inteligencia BBDD", _build_database_exposure_rows(database_assets)))
+
+    all_results.extend(normalize_results("Procedimientos Kali", build_kali_procedure_rows(
+        target_url=target_url,
+        has_auth=auth_status in {"Autenticado", "Indeterminado"},
+        verified_events=post_login_http_events,
+        db_assets=database_assets,
+    )))
+
     auth_attack_pages = dedupe_pages_by_url(build_auth_attack_pages(pages))
+    auth_attack_pages = _ensure_login_target_first(
+        auth_targets=auth_attack_pages,
+        all_pages=pages,
+        auth_used_login_url=auth_used_login_url,
+        auth_status=auth_status,
+    )
     attackable_pages = dedupe_pages_by_url([p for p in pages if is_generic_attack_page(p)])
 
     # Safety net: if generic filter yields zero but auth/registration pages exist, use them as attackable scope.
@@ -3593,6 +4331,8 @@ def _scan_phase1(
         "auth_used_login_url": auth_used_login_url,
         "auth_final_url": auth_final_url,
         "auth_cookies": auth_cookies,
+        "auth_cookie_details": auth_cookie_details,
+        "post_login_http_events": post_login_http_events,
         "use_auth": bool(use_auth),
         "attackable_pages": attackable_pages,
         "auth_attack_pages": auth_attack_pages,
@@ -3610,6 +4350,7 @@ def _scan_phase1(
         "include_udp": bool(include_udp),
         "nmap_timeout_seconds": int(nmap_timeout_seconds or 420),
         "nmap_scripts": str(nmap_scripts or "").strip(),
+        "database_assets": database_assets,
         "enable_nessus": bool(enable_nessus),
         "nessus_mode": str(nessus_mode or "nessus-local"),
         "nessus_base_url": str(nessus_base_url or "https://localhost:8834").strip(),
@@ -3633,9 +4374,25 @@ def _render_phase1_summary(state):
     auth_status = str(state.get("auth_status", "No configurado") or "No configurado")
     auth_used_login_url = str(state.get("auth_used_login_url", "") or "")
     auth_cookie_names = sorted((state.get("auth_cookies") or {}).keys())
+    auth_cookie_details = state.get("auth_cookie_details") or []
+    database_assets = state.get("database_assets") or []
+    post_login_http_events = state.get("post_login_http_events") or []
     use_auth = bool(state.get("use_auth", False))
 
     login_pages = list(auth_attack_pages)
+    registration_pages = [
+        p for p in pages
+        if _safe_status_int(p.get("status_code")) not in {0, 404}
+        and str(p.get("classification", "")).lower() not in {"soft_404", "request_error"}
+        and (
+            str(p.get("classification", "")).lower() == "registration"
+            or any(
+                token in str(p.get("final_url") or p.get("url") or "").lower()
+                for token in ["/register", "/signup", "/registro", "crear-cuenta"]
+            )
+        )
+    ]
+    registration_pages = dedupe_pages_by_url(registration_pages)
 
     api_pages = [p for p in pages if p.get("classification") in ["api_candidate"]]
     admin_pages = [p for p in pages if p.get("classification") in ["admin_candidate"]]
@@ -3643,10 +4400,20 @@ def _render_phase1_summary(state):
     post_login_pages = [
         p for p in pages
         if str(p.get("discovery_context", "")).lower() == "post_login"
-        and _is_meaningful_post_login_page(p)
     ]
-    post_login_new = [p for p in post_login_pages if p.get("is_new_post_login")]
-    display_post_login = post_login_new or post_login_pages
+    verified_post_login = _filter_verified_post_login_pages(
+        post_login_pages,
+        target_url=state.get("target_url", ""),
+        auth_used_login_url=auth_used_login_url,
+    )
+    post_login_new = [p for p in verified_post_login if p.get("is_new_post_login")]
+    display_post_login = post_login_new or verified_post_login
+    traffic_post_login_urls = list(dict.fromkeys([
+        str(e.get("url") or "").strip()
+        for e in (post_login_http_events or [])
+        if str(e.get("url") or "").strip()
+    ]))
+    effective_post_login_count = len(display_post_login) if display_post_login else len(traffic_post_login_urls)
     post_login_protected = [
         p for p in display_post_login
         if str(p.get("classification", "")).lower() in {
@@ -3657,17 +4424,21 @@ def _render_phase1_summary(state):
             "sensitive_candidate",
         }
     ]
-    post_login_endpoint_hints = _collect_post_login_candidate_endpoints(display_post_login)
+    post_login_endpoint_hints = _collect_post_login_candidate_endpoints(
+        display_post_login,
+        target_url=state.get("target_url", ""),
+    )
 
     st.markdown("---")
     st.markdown("### Fase 1 completada — Superficie descubierta")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Páginas totales", len(pages))
     c2.metric("Páginas atacables", len(attackable_pages))
-    c3.metric("Logins / auth", len(login_pages))
+    c3.metric("Logins / registro", len(login_pages) + len(registration_pages))
     c4.metric("APIs candidatas", len(api_pages))
     c5.metric("Admin / protegidas", len(admin_pages) + len(protected_pages))
+    c6.metric("BBDD expuestas", len(database_assets))
 
     if use_auth:
         if auth_status == "Autenticado":
@@ -3689,6 +4460,9 @@ def _render_phase1_summary(state):
         else:
             st.info("Autenticación no ejecutada o sin credenciales completas en esta fase.")
 
+    if use_auth and (auth_cookie_details or auth_cookie_names):
+        _render_cookie_capture_panel(auth_cookie_details, state.get("auth_cookies") or {})
+
     if login_pages:
         st.markdown("**Logins y rutas de autenticación detectadas:**")
         for p in login_pages[:15]:
@@ -3698,6 +4472,11 @@ def _render_phase1_summary(state):
             st.markdown(f"- `{url}` — clasificación: **{classification}** — formularios: **{forms_count}**")
     else:
         st.info("No se detectaron rutas de autenticación. Los ataques de login no se ejecutarán.")
+
+    if registration_pages:
+        st.markdown("**Rutas de registro detectadas:**")
+        for p in registration_pages[:10]:
+            st.markdown(f"- `{p.get('final_url') or p.get('url') or ''}`")
 
     if api_pages:
         st.markdown("**APIs candidatas:**")
@@ -3709,11 +4488,23 @@ def _render_phase1_summary(state):
         for p in admin_pages[:10]:
             st.markdown(f"- `{p.get('final_url') or p.get('url', '')}`")
 
+    if database_assets:
+        with st.expander("Ver inventario técnico de BBDD expuestas", expanded=False):
+            for db in database_assets[:25]:
+                st.markdown(
+                    f"- **{db.get('db_type', '-') }** `{db.get('host','-')}:{db.get('port','-')}/{db.get('protocol','tcp')}` "
+                    f"— versión: **{db.get('version','desconocida')}** "
+                    f"— owner: **{db.get('owner','unknown')}**"
+                )
+            if len(database_assets) > 25:
+                st.caption(f"… y {len(database_assets) - 25} más")
+
     if use_auth:
         st.markdown(
-            f"**Cobertura post-login:** {len(display_post_login)} URL(s) relevantes en sesión autenticada | "
+            f"**Cobertura post-login:** {effective_post_login_count} URL(s) relevantes en sesión autenticada | "
             f"Rutas protegidas/candidatas: {len(post_login_protected)} | "
-            f"Endpoints candidatos: {len(post_login_endpoint_hints)}"
+            f"Endpoints candidatos: {len(post_login_endpoint_hints)} | "
+            f"Tráfico GET/POST verificado: {len(post_login_http_events)}"
         )
         if display_post_login:
             with st.expander("Ver URLs descubiertas post-login", expanded=False):
@@ -3730,15 +4521,25 @@ def _render_phase1_summary(state):
             with st.expander("Ver endpoints candidatos descubiertos tras login", expanded=False):
                 for endpoint in post_login_endpoint_hints:
                     st.markdown(f"- `{endpoint}`")
+        if post_login_http_events:
+            with st.expander("Ver tráfico autenticado interceptado (GET/POST)", expanded=False):
+                traffic_df = pd.DataFrame(post_login_http_events[:30])
+                st.dataframe(traffic_df, width="stretch")
+        elif traffic_post_login_urls:
+            with st.expander("Ver URLs inferidas por tráfico autenticado", expanded=False):
+                for endpoint in traffic_post_login_urls[:30]:
+                    st.markdown(f"- `{endpoint}`")
 
 
-def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_url, auth_final_url, auth_cookies, pages, all_results):
+def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_url, auth_final_url, auth_cookies, auth_cookie_details, post_login_http_events, pages, all_results, target_url=""):
     if not use_auth:
         return
 
     st.markdown("### Estado de autenticación y cobertura post-login")
 
     cookie_names = sorted((auth_cookies or {}).keys())
+    if auth_cookie_details:
+        cookie_names = sorted({str(item.get("name") or "") for item in auth_cookie_details if item.get("name")})
     status_upper = str(auth_status or "No configurado").upper()
     login_fragment = f" | Login usado: {auth_used_login_url}" if auth_used_login_url else ""
     final_fragment = f" | URL final auth: {auth_final_url}" if auth_final_url else ""
@@ -3756,10 +4557,14 @@ def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_ur
     post_login_pages = [
         p for p in (pages or [])
         if str(p.get("discovery_context", "")).lower() == "post_login"
-        and _is_meaningful_post_login_page(p)
     ]
-    post_login_new = [p for p in post_login_pages if p.get("is_new_post_login")]
-    display_post_login = post_login_new or post_login_pages
+    verified_post_login = _filter_verified_post_login_pages(
+        post_login_pages,
+        target_url=target_url,
+        auth_used_login_url=auth_used_login_url,
+    )
+    post_login_new = [p for p in verified_post_login if p.get("is_new_post_login")]
+    display_post_login = post_login_new or verified_post_login
     protected_post_login = [
         p for p in display_post_login
         if str(p.get("classification", "")).lower() in {
@@ -3770,7 +4575,10 @@ def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_ur
             "sensitive_candidate",
         }
     ]
-    post_login_endpoint_hints = _collect_post_login_candidate_endpoints(display_post_login)
+    post_login_endpoint_hints = _collect_post_login_candidate_endpoints(
+        display_post_login,
+        target_url=target_url,
+    )
 
     st.caption(
         f"URLs post-login descubiertas: {len(display_post_login)} | "
@@ -3797,6 +4605,12 @@ def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_ur
             for endpoint in post_login_endpoint_hints:
                 st.markdown(f"- `{endpoint}`")
 
+    if post_login_http_events:
+        with st.expander("Tráfico autenticado interceptado (GET/POST)", expanded=False):
+            st.dataframe(pd.DataFrame((post_login_http_events or [])[:40]), width="stretch")
+
+    _render_cookie_capture_panel(auth_cookie_details, auth_cookies)
+
     coverage_row = next(
         (
             row for row in (all_results or [])
@@ -3810,6 +4624,46 @@ def _render_auth_post_login_summary(*, use_auth, auth_status, auth_used_login_ur
         if len(evidence_text) > 280:
             evidence_text = evidence_text[:280].rstrip() + "..."
         st.caption(f"Evidencia post-login: {evidence_text}")
+
+
+def _render_database_exposure_summary(*, database_assets, candidate_targets):
+    assets = list(database_assets or [])
+    db_candidates = [
+        t for t in (candidate_targets or [])
+        if str(t.get("kind") or "").strip().lower() == "database-service"
+    ]
+
+    if not assets and not db_candidates:
+        return
+
+    st.markdown("### Inteligencia de bases de datos detectadas")
+    st.caption(
+        f"Instancias BBDD detectadas: {len(assets)} | "
+        f"Targets ofensivos derivados: {len(db_candidates)}"
+    )
+
+    if assets:
+        table_rows = []
+        for item in assets[:40]:
+            table_rows.append({
+                "motor": item.get("db_type") or "",
+                "host": item.get("host") or "",
+                "puerto": item.get("port") or "",
+                "version": item.get("version") or "desconocida",
+                "owner": item.get("owner") or "unknown",
+                "producto": item.get("product") or item.get("service") or "",
+            })
+        st.dataframe(pd.DataFrame(table_rows), width="stretch")
+
+    if db_candidates:
+        with st.expander("Targets BBDD priorizados para validación ofensiva", expanded=False):
+            for target in db_candidates[:30]:
+                st.markdown(
+                    f"- `{target.get('target')}` — score: **{target.get('priority_score', '-') }** "
+                    f"— owner: **{target.get('owner', 'unknown')}** — {target.get('reason', '')}"
+                )
+            if len(db_candidates) > 30:
+                st.caption(f"… y {len(db_candidates) - 30} más")
 
 
 if run_scan:
@@ -3886,6 +4740,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     _render_cve_findings_panel(
         cves=state.get("all_cves_found") or [],
         target_url=target_url,
+        pages=pages,
         enable_exploit_ai=bool(st.session_state.get("_enable_exploit_ai", True)),
         exploit_ai_model=str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3"),
     )
@@ -3919,7 +4774,17 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                 for p in auth_attack_pages_preview[:30]:
                     u = p.get("final_url") or p.get("url") or ""
                     forms_n = len(p.get("forms") or [])
-                    st.markdown(f"- `{u}` &nbsp; <span style='color:#ffadad;font-size:0.85em'>forms: {forms_n}</span>", unsafe_allow_html=True)
+                    runtime_inputs = p.get("browser_inputs") or (p.get("browser_runtime") or {}).get("inputs") or []
+                    runtime_n = len(runtime_inputs)
+                    if forms_n > 0:
+                        evidence_tag = f"forms: {forms_n}"
+                    elif runtime_n > 0:
+                        evidence_tag = f"inputs runtime: {runtime_n}"
+                    elif p.get("auth_target_forced"):
+                        evidence_tag = "login verificado"
+                    else:
+                        evidence_tag = "evidencia dinámica no disponible"
+                    st.markdown(f"- `{u}` &nbsp; <span style='color:#ffadad;font-size:0.85em'>{evidence_tag}</span>", unsafe_allow_html=True)
                 if len(auth_attack_pages_preview) > 30:
                     st.caption(f"… y {len(auth_attack_pages_preview) - 30} más")
         else:
@@ -4221,6 +5086,14 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                     use_ollama=True,
                     max_ai_queries=5,
                 )
+            # Enrich with surface context (route + DOM)
+            _phase2_pages = state.get("pages") or pages or []
+            if exploit_suggestions and _phase2_pages:
+                try:
+                    from scanner.surface_cve_mapper import enrich_suggestions_with_surface
+                    enrich_suggestions_with_surface(exploit_suggestions, _phase2_pages, target_url=target_url)
+                except Exception:
+                    pass
             st.session_state["last_exploit_suggestions"] = exploit_suggestions
 
             if exploit_suggestions:
@@ -4341,8 +5214,16 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         auth_used_login_url=state.get("auth_used_login_url", ""),
         auth_final_url=state.get("auth_final_url", ""),
         auth_cookies=state.get("auth_cookies") or {},
+        auth_cookie_details=state.get("auth_cookie_details") or [],
+        post_login_http_events=state.get("post_login_http_events") or [],
         pages=pages,
         all_results=all_results,
+        target_url=state.get("target_url", ""),
+    )
+
+    _render_database_exposure_summary(
+        database_assets=state.get("database_assets") or [],
+        candidate_targets=state.get("candidate_targets") or [],
     )
 
     st.dataframe(df, width="stretch")
@@ -4405,6 +5286,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             discovery=discovery,
             pages_count=len(pages),
             scan_mode=scan_mode,
+            auth_cookie_details=state.get("auth_cookie_details") or [],
         )
         st.session_state["last_report_path"] = report_path
         st.session_state["last_report_bytes"] = _get_report_bytes_if_available(report_path)

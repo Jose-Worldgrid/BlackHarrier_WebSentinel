@@ -33,12 +33,12 @@ A modular, Streamlit-based web security auditing toolkit designed for authorized
 
 ## Instalación rápida
 
-### Windows
+### Windows (recomendado: setup.ps1)
 
 ```bat
 git clone https://github.com/TU_USUARIO/blackharrier-webaudit.git
 cd blackharrier-webaudit
-setup_windows.bat
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
 ### Linux / macOS
@@ -50,11 +50,60 @@ chmod +x setup_unix.sh
 ./setup_unix.sh
 ```
 
-Los scripts hacen automáticamente:
-1. Crean un entorno virtual Python (`.venv`)
-2. Instalan todas las dependencias de `requirements.txt`
-3. Instalan Chromium para Playwright
-4. Detectan Nmap y Ollama, con instrucciones si no están presentes
+El script setup.ps1 deja la máquina lista desde cero (Windows), incluyendo:
+1. Política de ejecución PowerShell en CurrentUser
+2. Instalación/detección de Scoop
+3. Descarga directa e instalación de HTTPX, Nuclei y Katana en `scoop\shims`
+4. Limpieza de temporales y `nuclei -update-templates`
+5. Instalación de Python (si falta), venv, dependencias de `requirements.txt` y Playwright Chromium
+6. Instalación adicional de herramientas recomendadas (Nmap, ffuf, feroxbuster, sqlmap, wafw00f)
+
+---
+
+## Windows desde 0 (paso a paso con comandos)
+
+> Este flujo está pensado para una máquina limpia. Ejecuta PowerShell normal (no hace falta admin para todo, pero algunos instaladores pueden pedir UAC).
+
+1. Clona el repositorio:
+
+    ```powershell
+    git clone https://github.com/TU_USUARIO/blackharrier-webaudit.git
+    cd blackharrier-webaudit
+    ```
+
+2. Ejecuta el setup automático:
+
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File .\setup.ps1
+    ```
+
+3. Arranca la herramienta:
+
+    ```powershell
+    .\.venv\Scripts\Activate.ps1
+    streamlit run app.py
+    ```
+
+4. Abre en navegador:
+
+    ```text
+    http://localhost:8501
+    ```
+
+### Orden interno exacto que ejecuta setup.ps1
+
+El script respeta este orden estricto para ProjectDiscovery:
+
+1. `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force`
+2. `Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression` (si Scoop no existe)
+3. Descarga e instalación directa de:
+    - HTTPX 1.6.4
+    - Nuclei 3.3.4
+    - Katana 1.6.1
+4. `Remove-Item ...zip -Force`
+5. `nuclei -update-templates`
+
+Después de ese bloque, añade lo que falta para que todo funcione en el proyecto: Python+venv, paquetes, Playwright y herramientas externas recomendadas.
 
 ---
 

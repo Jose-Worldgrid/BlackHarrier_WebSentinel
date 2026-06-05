@@ -37,11 +37,14 @@ def get_default_proxy_url():
 
 
 class HttpClient:
-    def __init__(self, timeout=None, delay=None, verify_ssl=None, proxy_url=None):
+    def __init__(self, timeout=None, delay=None, verify_ssl=None, proxy_url=None, capture_http=False, capture_limit=1000):
         self.timeout = DEFAULT_TIMEOUT if timeout is None else timeout
         self.delay = DEFAULT_DELAY if delay is None else delay
         self.verify_ssl = DEFAULT_VERIFY_SSL if verify_ssl is None else verify_ssl
         self.proxy_url = DEFAULT_PROXY_URL if proxy_url is None else proxy_url
+        self.capture_http = bool(capture_http)
+        self.capture_limit = max(100, int(capture_limit or 1000))
+        self.request_history = []
         self.session = requests.Session()
 
         self.session.headers.update({
@@ -77,13 +80,71 @@ class HttpClient:
                 "https": self.proxy_url,
             })
 
+    def enable_http_capture(self, enabled=True, limit=None):
+        self.capture_http = bool(enabled)
+        if limit is not None:
+            self.capture_limit = max(100, int(limit or self.capture_limit))
+
+    def clear_http_history(self):
+        self.request_history = []
+
+    def _record_http_event(self, event):
+        if not self.capture_http:
+            return
+        self.request_history.append(event)
+        if len(self.request_history) > self.capture_limit:
+            self.request_history = self.request_history[-self.capture_limit:]
+
     def _request(self, method, url, **kwargs):
+        method_name = str(getattr(method, "__name__", "get") or "get").upper()
+        started = time.time()
+        response = None
+        error_text = ""
+
         verify = kwargs.get("verify", self.verify_ssl)
-        if verify is False:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
-                return method(url, **kwargs)
-        return method(url, **kwargs)
+        try:
+            if verify is False:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+                    response = method(url, **kwargs)
+            else:
+                response = method(url, **kwargs)
+            return response
+        except Exception as exc:
+            error_text = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            duration_ms = int((time.time() - started) * 1000)
+            request_blob = ""
+            response_blob = ""
+            if "data" in kwargs and kwargs.get("data") is not None:
+                request_blob = str(kwargs.get("data"))
+            elif "json" in kwargs and kwargs.get("json") is not None:
+                request_blob = str(kwargs.get("json"))
+
+            if response is not None:
+                try:
+                    content_type = str(response.headers.get("Content-Type", "") or "").lower()
+                    if any(token in content_type for token in ["json", "text", "xml", "html", "javascript"]):
+                        response_blob = str(response.text or "")[:700]
+                except Exception:
+                    response_blob = ""
+
+            event = {
+                "method": method_name,
+                "url": str(url or ""),
+                "final_url": str(getattr(response, "url", url) or ""),
+                "status_code": int(getattr(response, "status_code", 0) or 0),
+                "duration_ms": duration_ms,
+                "content_type": str(getattr(response, "headers", {}).get("Content-Type", "") if response is not None else ""),
+                "request_body_preview": request_blob[:300],
+                "response_body_preview": response_blob,
+                "response_server": str(getattr(response, "headers", {}).get("Server", "") if response is not None else ""),
+                "response_powered_by": str(getattr(response, "headers", {}).get("X-Powered-By", "") if response is not None else ""),
+                "session_cookie_names": sorted([c.name for c in self.session.cookies])[:12],
+                "error": error_text,
+            }
+            self._record_http_event(event)
 
     def normalize_url(self, url):
         parsed = urlparse(url)

@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import os
 import re
+from urllib.parse import urlparse
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -966,10 +967,22 @@ def _is_meaningful_page_for_report(page: dict) -> bool:
         return False
     if status == 404:
         return False
-    if classification in {"soft_404", "request_error", "html_candidate"}:
+    if status == 0 or status >= 600:  # Invalid or unknown status
+        return False
+    if classification in {"soft_404", "request_error", "html_candidate", "redirect_loop", "timeout"}:
         return False
 
-    return classification in REPORTABLE_PAGE_CLASSES or status in (401, 403) or status >= 500
+    # Strict content validation: exclude likely error/placeholder pages
+    content_length = int(page.get("content_length") or 0)
+    if 0 < content_length < 100:  # Too small to be meaningful
+        if classification not in {"api_candidate"}:
+            return False
+
+    # Exclude if no meaningful classification and not an error/auth status
+    meaningful_classification = classification in REPORTABLE_PAGE_CLASSES
+    meaningful_status = status in (401, 403) or (500 <= status < 600)
+
+    return meaningful_classification or meaningful_status
 
 
 def _dedupe_pages_for_report(pages: list) -> list:
@@ -1316,6 +1329,40 @@ def add_summary_table(document, findings, errors, oks):
 
 def _extract_candidate_targets_from_results(results: list) -> list:
     candidates = []
+    seen = set()
+
+    def _normalize_target(raw_target: str, kind: str) -> str:
+        text = safe_text(raw_target).strip()
+        if not text:
+            return ""
+
+        low = text.lower()
+        if low in {"unknown_or_api", "unknown", "n/a", "-"}:
+            return ""
+
+        if text.startswith(("http://", "https://")):
+            parsed = urlparse(text)
+            path = parsed.path or "/"
+            normalized = f"{parsed.scheme}://{parsed.netloc}{path}".rstrip("/")
+            plow = path.lower()
+            qlow = safe_text(parsed.query).lower()
+
+            # Drop auth/registration and redirect helper URLs from risk register.
+            if any(tok in plow for tok in ["/login", "/signin", "/auth", "/session", "/register", "/signup", "/registro"]):
+                return ""
+            if any(tok in qlow for tok in ["redirect=", "next=", "returnurl=", "callbackurl=", "_rsc="]):
+                return ""
+
+            # For endpoint-like candidates, keep only high-value paths.
+            if kind in {"sensitive-endpoint", "endpoint", "endpoint/api"}:
+                if not any(tok in plow for tok in ["/admin", "/api", "/internal", "/dashboard", "/panel", "/private", "/manage"]):
+                    return ""
+
+            return normalized
+
+        # Non-URL targets are acceptable for infra/database candidates.
+        return text
+
     for row in results or []:
         control = safe_text(row.get("Control", "")).lower()
         if "objetivos candidatos priorizados" not in control:
@@ -1328,7 +1375,21 @@ def _extract_candidate_targets_from_results(results: list) -> list:
         except Exception:
             continue
         if isinstance(parsed, list):
-            candidates.extend([x for x in parsed if isinstance(x, dict)])
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                kind = safe_text(item.get("kind", "")).strip().lower() or "candidate"
+                target = _normalize_target(item.get("target", ""), kind)
+                if not target:
+                    continue
+                key = f"{kind}::{target.lower()}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                cloned = dict(item)
+                cloned["kind"] = kind
+                cloned["target"] = target
+                candidates.append(cloned)
     return candidates
 
 
@@ -1425,6 +1486,23 @@ def _asset_row_score(base_score: float, sev: str, kind: str) -> float:
 def build_asset_risk_register(findings: list, assets: dict, results: list) -> list:
     rows = []
 
+    def _clean_endpoint_url(value: str) -> str:
+        text = safe_text(value).strip()
+        if not text:
+            return ""
+        m = re.search(r"https?://[^\s|,;]+", text, re.IGNORECASE)
+        if not m:
+            return ""
+        parsed = urlparse(m.group(0).strip())
+        path = parsed.path or "/"
+        plow = path.lower()
+        qlow = safe_text(parsed.query).lower()
+        if any(tok in plow for tok in ["/login", "/signin", "/auth", "/session", "/register", "/signup", "/registro"]):
+            return ""
+        if any(tok in qlow for tok in ["redirect=", "next=", "returnurl=", "callbackurl=", "_rsc="]):
+            return ""
+        return f"{parsed.scheme}://{parsed.netloc}{path}".rstrip("/")
+
     for p in assets.get("ports") or []:
         port = int(p.get("port", 0) or 0)
         sev = "Alta" if safe_text(p.get("severity")) == "Alta" else "Media"
@@ -1438,7 +1516,15 @@ def build_asset_risk_register(findings: list, assets: dict, results: list) -> li
             "action": "Restringir exposición por firewall/ACL, validar autenticación y parcheo.",
         })
 
-    for ep in (assets.get("api_endpoints") or [])[:10]:
+    api_urls = []
+    for ep in (assets.get("api_endpoints") or []):
+        clean = _clean_endpoint_url(ep)
+        if clean and clean not in api_urls:
+            api_urls.append(clean)
+        if len(api_urls) >= 10:
+            break
+
+    for ep in api_urls:
         score = _asset_row_score(32, "Media", "endpoint")
         rows.append({
             "asset": truncate(ep, 90),
@@ -1472,12 +1558,19 @@ def build_asset_risk_register(findings: list, assets: dict, results: list) -> li
         })
 
     for c in _extract_candidate_targets_from_results(results)[:12]:
+        c_kind = safe_text(c.get("kind", "Candidato"))
+        c_target = safe_text(c.get("target", ""))
+        if c_kind in {"sensitive-endpoint", "endpoint", "endpoint/api"}:
+            c_target = _clean_endpoint_url(c_target)
+            if not c_target:
+                continue
+
         base = float(c.get("priority_score", 0) or 0) * 7.5
         sev = "Alta" if float(c.get("priority_score", 0) or 0) >= 8 else "Media"
         score = _asset_row_score(base, sev, "candidate")
         rows.append({
-            "asset": safe_text(c.get("target", "")),
-            "kind": safe_text(c.get("kind", "Candidato")),
+            "asset": c_target,
+            "kind": c_kind,
             "severity": sev,
             "score": round(score, 1),
             "reason": safe_text(c.get("reason", "")) or "Activo priorizado por correlación ofensiva.",
@@ -1638,7 +1731,7 @@ def add_auth_surface_summary(document, pages):
         )
 
 
-def add_authenticated_session_evidence(document, results, pages):
+def add_authenticated_session_evidence(document, results, pages, auth_cookie_details=None):
     document.add_heading("4.1 Evidencia de sesión autenticada y expansión post-login", 2)
 
     auth_rows = [
@@ -1685,6 +1778,96 @@ def add_authenticated_session_evidence(document, results, pages):
         style="List Bullet",
     )
 
+    # ─────────────────────────────────────────────────────────
+    # Section 4.1.1: Cookie de sesión
+    # ─────────────────────────────────────────────────────────
+    cookie_capture_rows = [
+        row for row in auth_rows
+        if "captura de cookies de sesión" in safe_text(row.get("Control")).lower()
+    ]
+    cookie_details = list(auth_cookie_details or [])
+
+    if cookie_capture_rows or cookie_details:
+        document.add_heading("4.1.1 Evidencia de cookie de sesión", 3)
+        if cookie_capture_rows:
+            cookie_row = cookie_capture_rows[0]
+
+            evidence_text = safe_text(cookie_row.get("Evidencia") or "")
+            if evidence_text:
+                document.add_paragraph(f"Captura: {truncate(evidence_text, 380)}", style="List Bullet")
+
+            description_text = safe_text(cookie_row.get("Descripción") or "")
+            if description_text:
+                document.add_paragraph(f"Propósito: {truncate(description_text, 300)}", style="List Bullet")
+
+            recommendation_text = safe_text(cookie_row.get("Recomendación") or "")
+            if recommendation_text:
+                document.add_paragraph(f"Recomendación: {truncate(recommendation_text, 280)}", style="List Bullet")
+
+        if cookie_details:
+            cookie_names = [safe_text(c.get("name")) for c in cookie_details if safe_text(c.get("name"))]
+            if cookie_names:
+                document.add_paragraph(
+                    f"Cookies de sesión observadas: {', '.join(cookie_names[:10])}",
+                    style="List Bullet",
+                )
+            for cookie in cookie_details[:6]:
+                cname = safe_text(cookie.get("name") or "-")
+                cdomain = safe_text(cookie.get("domain") or "-")
+                cpath = safe_text(cookie.get("path") or "-")
+                csecure = "sí" if bool(cookie.get("secure")) else "no"
+                chttp = "sí" if bool(cookie.get("http_only")) else "no"
+                csame = safe_text(cookie.get("same_site") or "-")
+                document.add_paragraph(
+                    f"{cname} | dominio={cdomain} | path={cpath} | Secure={csecure} | HttpOnly={chttp} | SameSite={csame}",
+                    style="List Bullet",
+                )
+
+    # ─────────────────────────────────────────────────────────
+    # Section 4.1.2: Tráfico HTTP autenticado
+    # ─────────────────────────────────────────────────────────
+    traffic_summary_rows = [
+        row for row in auth_rows
+        if "intercepción http autenticada" in safe_text(row.get("Control")).lower()
+    ]
+    traffic_rows = [
+        row for row in auth_rows
+        if safe_text(row.get("Control")).lower().startswith("http autenticado ")
+    ]
+
+    if traffic_summary_rows or traffic_rows:
+        document.add_heading("4.1.2 Tráfico HTTP autenticado (GET/POST)", 3)
+        if traffic_summary_rows:
+            summary_evidence = truncate(
+                clean_evidence_for_report(traffic_summary_rows[0].get("Evidencia")),
+                260,
+            )
+            document.add_paragraph(f"Resumen: {summary_evidence}", style="List Bullet")
+
+        method_counter = {"GET": 0, "POST": 0}
+        for row in traffic_rows:
+            control = safe_text(row.get("Control")).strip().lower()
+            if control.startswith("http autenticado get "):
+                method_counter["GET"] += 1
+            elif control.startswith("http autenticado post "):
+                method_counter["POST"] += 1
+
+        document.add_paragraph(
+            f"Endpoints verificados por tráfico autenticado: {len(traffic_rows)} | "
+            f"GET: {method_counter['GET']} | POST: {method_counter['POST']}",
+            style="List Bullet",
+        )
+
+        for row in traffic_rows[:8]:
+            control = truncate(safe_text(row.get("Control")), 120)
+            evidence = truncate(clean_evidence_for_report(row.get("Evidencia")), 160)
+            document.add_paragraph(f"{control} | {evidence}", style="List Bullet")
+
+    # ─────────────────────────────────────────────────────────
+    # Section 4.1.3: Descubrimiento post-login
+    # ─────────────────────────────────────────────────────────
+    document.add_heading("4.1.3 Descubrimiento post-login", 3)
+    
     deduped_pages = _dedupe_pages_for_report(pages or [])
     post_login_pages = [
         page for page in deduped_pages
@@ -2264,6 +2447,7 @@ def generate_word_report(
     discovery: dict | None = None,
     pages_count: int | None = None,
     scan_mode: str | None = None,
+    auth_cookie_details: list | None = None,
 ):
     os.makedirs("generated_reports", exist_ok=True)
 
@@ -2366,7 +2550,7 @@ def generate_word_report(
 
     # ── Section 4: Auth surface ───────────────────────────────────────
     add_auth_surface_summary(document, pages)
-    add_authenticated_session_evidence(document, deduped_results, pages)
+    add_authenticated_session_evidence(document, deduped_results, pages, auth_cookie_details=auth_cookie_details)
 
     # ── Section 5: Top findings ───────────────────────────────────────
     add_top_findings_table(document, findings)

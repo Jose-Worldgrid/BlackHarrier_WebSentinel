@@ -30,6 +30,9 @@ NMAP_PROFILE_SCRIPTS = {
         "default", "safe", "discovery",
         "http-title", "http-server-header", "http-headers", "ssl-cert",
         "dns-nsid", "banner",
+        "mysql-info", "mysql-variables", "mysql-databases",
+        "ms-sql-info", "ms-sql-config",
+        "pgsql-info", "mongodb-info", "redis-info",
     ],
     "AGGRESSIVE": [
         "default", "safe", "discovery", "vuln", "banner",
