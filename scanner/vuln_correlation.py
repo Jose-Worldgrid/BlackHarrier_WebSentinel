@@ -1,3 +1,5 @@
+# Modulo de correlacion de evidencia para priorizar riesgos y exposiciones tecnicas.
+
 import json
 import os
 import re
@@ -101,7 +103,7 @@ def scan_vulnerability_correlation(url: str, profile: str = "standard"):
         if not str(response.headers.get(header_name, "")).strip():
             missing.append(rule)
 
-    # Check exposed informational headers (version leakage)
+
     exposed_leaks = []
     for rule in rules.get("exposed_header_rules", []):
         header_name = str(rule.get("header") or "")
@@ -123,7 +125,7 @@ def scan_vulnerability_correlation(url: str, profile: str = "standard"):
 
     results = []
 
-    # Report version advisories individually for granularity
+
     for advisory in advisories[:8]:
         sev = str(advisory.get("severity") or "Media")
         results.append({
@@ -139,7 +141,7 @@ def scan_vulnerability_correlation(url: str, profile: str = "standard"):
             "recommendation": advisory.get("recommendation", "Actualizar a la versión más reciente soportada."),
         })
 
-    # Report missing security headers
+
     if missing:
         for rule in missing[:6]:
             results.append({
@@ -154,7 +156,7 @@ def scan_vulnerability_correlation(url: str, profile: str = "standard"):
                 "recommendation": str(rule.get("recommendation") or "Añadir cabecera de seguridad."),
             })
 
-    # Report info leaks via exposed headers
+
     for leak in exposed_leaks[:4]:
         results.append({
             "control": f"Fuga de versión: {leak.get('header', '')}",
@@ -166,4 +168,3 @@ def scan_vulnerability_correlation(url: str, profile: str = "standard"):
         })
 
     return results
-

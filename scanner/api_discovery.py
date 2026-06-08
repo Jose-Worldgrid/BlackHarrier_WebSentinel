@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para api discovery.
+
 import re
 from collections import defaultdict
 from urllib.parse import urljoin, urlparse

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para directory listing.
+
 from urllib.parse import urljoin
 from scanner.http_client import HttpClient
 

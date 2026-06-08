@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para dom xss.
+
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -130,7 +132,7 @@ def scan_dom_xss(pages):
                         "recommendation": "Revisar si este sink recibe datos controlables por usuario antes de reportarlo como vulnerabilidad."
                     })
 
-            # Angular bypass patterns
+
             if re.search(r"bypassSecurityTrust", code, re.IGNORECASE):
                 results.append({
                     "control": "Angular DomSanitizer bypassSecurityTrust",

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para external tools pipeline.
+
 import argparse
 import json
 import os
@@ -359,7 +361,7 @@ def _normalize_auth_params(auth_params=None):
     if cookie:
         headers.append(f"Cookie: {cookie}")
 
-    # preserve order + dedupe
+
     headers = list(dict.fromkeys(headers))
     return {
         "cookie": cookie,
@@ -463,7 +465,7 @@ def _nuclei_target_priority(url_text: str) -> tuple:
     is_root = path in {"", "/"}
     has_ext = "." in (path.rsplit("/", 1)[-1] or "")
     depth = path.count("/")
-    # Lower tuple values are prioritized.
+
     return (
         0 if is_root else 1,
         1 if has_ext else 0,
@@ -505,7 +507,7 @@ def _extract_katana_urls_from_line(line: str, target_url: str):
 
     raw = []
 
-    # Katana may output JSON lines or plain URL text depending on flags/version.
+
     if text.startswith("{") and text.endswith("}"):
         try:
             obj = json.loads(text)
@@ -596,8 +598,8 @@ def _classify_httpx_endpoint(row: dict):
     if status in REDIRECT_HTTPX_STATUSES:
         return "redirect_requires_verification", False
     if status == 404:
-        # 404 with tech fingerprint often means endpoint exists in stack but is blocked,
-        # rewritten or requires valid auth/context.
+
+
         if tech:
             return "discovered_but_unverified_404", False
         return "nonexistent_irrelevant", False
@@ -644,9 +646,9 @@ def verificar_endpoints_httpx(lista_urls, auth_params=None):
     for cmd in attempted:
         proc_rc, out, err = _run_command_with_input(cmd, payload, timeout=360)
 
-        # If command works or produced parseable output, keep this result.
+
         if proc_rc == 0 or (out or "").strip():
-            # Retry only when we clearly hit unknown flag for this httpx build.
+
             if "flag provided but not defined" in (out or "").lower() or "flag provided but not defined" in (err or "").lower():
                 continue
             break
@@ -805,7 +807,7 @@ def ejecutar_fuzzing_directorios(target_url: str, auth_params=None, wordlist_pat
 
             return endpoints, {"available": True, "executed": True, "count": len(endpoints), "engine": "feroxbuster"}
 
-        # Fallback to ffuf if feroxbuster is not installed.
+
         normalized = _normalize_auth_params(auth_params)
         cmd = [
             ffuf_bin,
@@ -1118,7 +1120,7 @@ def run_external_tools_pipeline(
     external_sigs = set()
     consolidated = 0
 
-    # Sequential aggressive web chain with optional authentication.
+
     normalized_auth = _normalize_auth_params(auth_params)
     prefer_prefetched = bool(prefetched_web_chain and isinstance(prefetched_web_chain, dict) and not normalized_auth.get("headers"))
 

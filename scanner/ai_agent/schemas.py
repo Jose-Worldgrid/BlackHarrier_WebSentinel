@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para schemas.
+
 from dataclasses import dataclass, field
 from typing import Any
 

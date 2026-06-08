@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para headers.
+
 from scanner.http_client import HttpClient
 
 

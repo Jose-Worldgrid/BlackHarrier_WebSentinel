@@ -1,4 +1,6 @@
-﻿from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+# Modulo de escaneo y analisis para path traversal.
+
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import logging
 from scanner.http_client import HttpClient
 
@@ -87,7 +89,7 @@ def scan_path_traversal(pages):
         parsed = urlparse(page_url)
         params = parse_qs(parsed.query)
 
-        # 1. Query-parameter traversal
+
         for param in list(params.keys()):
             if param.lower() not in PATH_PARAM_HINTS:
                 continue
@@ -104,7 +106,7 @@ def scan_path_traversal(pages):
                     results.append(res)
                     break
 
-        # 2. URL path-segment traversal (REST endpoints)
+
         for test_url, payload in _build_segment_traversal_urls(page_url):
             key = ("seg", test_url[:80])
             if key in seen:
@@ -114,7 +116,7 @@ def scan_path_traversal(pages):
             if res:
                 results.append(res)
 
-        # 3. POST form fields containing file/path parameters
+
         for form in (page.get("forms") or []):
             if not isinstance(form, dict):
                 continue

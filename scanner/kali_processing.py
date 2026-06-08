@@ -1,3 +1,5 @@
+# Modulo de procesamiento y normalizacion de salidas de herramientas estilo Kali.
+
 import os
 import re
 import statistics

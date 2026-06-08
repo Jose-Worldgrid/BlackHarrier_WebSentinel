@@ -2,17 +2,17 @@
 
 function Write-Step {
     param([string]$Message)
-    Write-Host "`n[+] $Message" -ForegroundColor Cyan
+    Write-Host "`n[>] $Message" -ForegroundColor DarkRed
 }
 
 function Write-Ok {
     param([string]$Message)
-    Write-Host "[OK] $Message" -ForegroundColor Green
+    Write-Host "[OK] $Message" -ForegroundColor White
 }
 
 function Write-Warn {
     param([string]$Message)
-    Write-Host "[WARN] $Message" -ForegroundColor Yellow
+    Write-Host "[WARN] $Message" -ForegroundColor Red
 }
 
 function Write-Fail {
@@ -20,29 +20,97 @@ function Write-Fail {
     Write-Host "[ERROR] $Message" -ForegroundColor Red
 }
 
+function Write-Centered {
+    param(
+        [string]$Text,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray
+    )
+
+    $width = [Math]::Max(60, $Host.UI.RawUI.WindowSize.Width)
+    $clean = ([string]$Text).Replace("`t", "    ")
+    $pad = [Math]::Max(0, [int](($width - $clean.Length) / 2))
+    Write-Host ((" " * $pad) + $clean) -ForegroundColor $Color
+}
+
+function Write-Left {
+    param(
+        [string]$Text,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray,
+        [int]$Indent = 6
+    )
+
+    $clean = ([string]$Text).Replace("`t", "    ")
+    $leftPad = " " * [Math]::Max(0, $Indent)
+    Write-Host ($leftPad + $clean) -ForegroundColor $Color
+}
+
+function Write-Right {
+    param(
+        [string]$Text,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray,
+        [int]$RightPadding = 2
+    )
+
+    $clean = ([string]$Text).Replace("`t", "    ")
+    $width = [Math]::Max(60, $Host.UI.RawUI.WindowSize.Width)
+    $pad = [Math]::Max(0, $width - $clean.Length - [Math]::Max(0, $RightPadding))
+    Write-Host ((" " * $pad) + $clean) -ForegroundColor $Color
+}
+
 function Write-Bar {
-    param([ConsoleColor]$Color = [ConsoleColor]::DarkCyan)
-    Write-Host "///////////////////////////////////////////////////////////////////////" -ForegroundColor $Color
+    param(
+        [ConsoleColor]$Color = [ConsoleColor]::Red,
+        [int]$Length = 108
+    )
+    $len = [Math]::Max(60, $Length)
+    $bar = ("/" * $len)
+    Write-Left $bar -Color $Color -Indent 4
+}
+
+function Write-BrandArtLine {
+    param(
+        [string]$Line,
+        [int]$RedChars = 30,
+        [int]$Indent = 0
+    )
+
+    $safe = [string]$Line
+    $pad = " " * [Math]::Max(0, $Indent)
+
+    if ($safe.Length -le $RedChars) {
+        Write-Host ($pad + $safe) -ForegroundColor DarkRed
+        return
+    }
+
+    $left = $safe.Substring(0, $RedChars)
+    $right = $safe.Substring($RedChars)
+
+    Write-Host ($pad + $left) -NoNewline -ForegroundColor DarkRed
+    Write-Host $right -ForegroundColor White
 }
 
 function Show-Banner {
     Clear-Host
-    Write-Bar -Color DarkCyan
-    Write-Host "//   ____  _            _    _   _                           _      //" -ForegroundColor Cyan
-    Write-Host "//  | __ )| | __ _  ___| | _| | | | __ _ _ __ _ __ _   _  __| |     //" -ForegroundColor Cyan
-    Write-Host "//  |  _ \| |/ _` |/ __| |/ / |_| |/ _` |  __|  __| | | |/ _` |     //" -ForegroundColor Cyan
-    Write-Host "//  | |_) | | (_| | (__|   <|  _  | (_| | |  | |  | |_| | (_| |     //" -ForegroundColor Cyan
-    Write-Host "//  |____/|_|\__,_|\___|_|\_\_| |_|\__,_|_|  |_|   \__,_|\__,_|     //" -ForegroundColor Cyan
-    Write-Host "//                                                                   //" -ForegroundColor Cyan
-    Write-Host "//                          by Jose                                  //" -ForegroundColor DarkGray
-    Write-Bar -Color DarkCyan
+        Write-Host ""
+    Write-BrandArtLine "████  █      ███   ███  █   █ █   █  ███  ████  ████  ███ █████ ████    "
+    Write-BrandArtLine "█░░░█ █░    █ ░░█ █ ░░░ █░ █ ░█░  █░█ ░░█ █░░░█ █░░░█  █░░█░░░░░█░░░█   "
+    Write-BrandArtLine "████░░█░░   █████░█░ ░░░███ ░ █████░█████░████░░████░░ █░░████░░████░░  "
+    Write-BrandArtLine "█░░░█ █░░   █░░░█░█░░   █░░█ ░█░░░█░█░░░█░█░░█░ █░░█░ ░█░░█░░░░ █░░█░ ░ "
+    Write-BrandArtLine "████░░█████ █░░░█░░███  █░░░█ █░░░█░█░░░█░█░░░█░█░░░█░███░█████░█░░░█░  "
+    Write-BrandArtLine " ░░░░ ░░░░░░ ░░  ░░ ░░░  ░░  ░ ░░  ░░░░  ░░░░  ░ ░░  ░ ░░░ ░░░░░ ░░  ░  "
+    Write-BrandArtLine "  ░░░░  ░░░░░ ░   ░  ░░░  ░   ░ ░   ░ ░   ░ ░   ░ ░   ░ ░░░ ░░░░░ ░   ░ "
+    Write-Host ""
+        Write-Host "" -NoNewline
+        Write-Host "by Jose" -ForegroundColor White
+    Write-Host ""
+    Write-Left "Setup Console (Windows)" -Color Gray -Indent 0
     Write-Host ""
 }
 
 function Show-Menu {
-    Write-Host "1) Setup completo (instalar todo lo faltante)" -ForegroundColor White
-    Write-Host "2) Solo comprobacion del entorno" -ForegroundColor White
-    Write-Host "3) Salir" -ForegroundColor White
+    Write-Left "[1] Setup completo (instalar todo lo faltante)" -Color White -Indent 4
+    Write-Left "[2] Solo comprobacion del entorno" -Color White -Indent 4
+    Write-Left "[3] Salir" -Color White -Indent 4
     Write-Host ""
 }
 
@@ -266,9 +334,52 @@ function Ensure-PythonProject {
         throw "No se pudo inicializar .venv"
     }
 
+    # A veces existe .venv pero incompleto (sin pip). En ese caso se recrea.
+    $pipReady = $false
+    try {
+        & $venvPython -m pip --version | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $pipReady = $true
+        }
+    }
+    catch {
+        $pipReady = $false
+    }
+
+    if (-not $pipReady) {
+        Write-Warn ".venv detectado pero incompleto (pip no disponible). Recreando entorno..."
+        if (Test-Path $venvPath) {
+            Remove-Item -Path $venvPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($PythonCmd -eq "py") {
+            py -3 -m venv $venvPath
+        }
+        else {
+            python -m venv $venvPath
+        }
+
+        if (-not (Test-Path $venvPython)) {
+            throw "No se pudo recrear .venv"
+        }
+
+        & $venvPython -m ensurepip --upgrade | Out-Null
+    }
+
+    $requirementsPath = Join-Path $PSScriptRoot "requirements.txt"
+    if (-not (Test-Path $requirementsPath)) {
+        throw "No se encontro requirements.txt en la raiz del proyecto"
+    }
+
     Write-Step "Instalando dependencias Python del proyecto..."
     & $venvPython -m pip install --upgrade pip
-    & $venvPython -m pip install -r (Join-Path $PSScriptRoot "requirements.txt")
+    & $venvPython -m pip install --upgrade setuptools wheel
+    & $venvPython -m pip install -r $requirementsPath
+
+    # Streamlit es obligatorio para arrancar la UI, se fuerza para escenarios desde cero.
+    Write-Step "Comprobando instalacion de Streamlit..."
+    & $venvPython -m pip install --upgrade streamlit
+    & $venvPython -m streamlit --version | Out-Host
 
     Write-Step "Instalando Chromium para Playwright..."
     & $venvPython -m playwright install chromium
@@ -321,6 +432,58 @@ function Run-EnvironmentCheck {
     $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
     if (Test-Path $venvPython) {
         Write-Ok ".venv: disponible"
+
+        $venvPipOk = $false
+        $venvPipDetail = $null
+        try {
+            $venvPipOutput = & $venvPython -m pip --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $venvPipOk = $true
+            }
+            elseif ($venvPipOutput) {
+                $venvPipDetail = (($venvPipOutput -join " ").Trim())
+            }
+        }
+        catch {
+            $venvPipDetail = $_.Exception.Message
+        }
+
+        if (-not $venvPipOk) {
+            Write-Warn ".venv: incompleto (pip no disponible)"
+            if ($venvPipDetail) {
+                Write-Warn ("Detalle: {0}" -f $venvPipDetail)
+            }
+            Write-Warn "Ejecuta opcion 1 para recrear e instalar todo el entorno"
+            return
+        }
+
+        # External commands do not always throw in PowerShell on non-zero exit.
+        # Validate both output and exit code to avoid false positives.
+        $streamlitOk = $false
+        $streamlitDetail = $null
+
+        try {
+            $streamlitOutput = & $venvPython -m streamlit --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $streamlitOk = $true
+            }
+            elseif ($streamlitOutput) {
+                $streamlitDetail = (($streamlitOutput -join " ").Trim())
+            }
+        }
+        catch {
+            $streamlitDetail = $_.Exception.Message
+        }
+
+        if ($streamlitOk) {
+            Write-Ok "Streamlit (.venv): listo"
+        }
+        else {
+            Write-Warn "Streamlit (.venv): no disponible"
+            if ($streamlitDetail) {
+                Write-Warn ("Detalle: {0}" -f $streamlitDetail)
+            }
+        }
     }
     else {
         Write-Warn ".venv: no encontrado"
@@ -372,3 +535,5 @@ catch {
     Write-Fail $_.Exception.Message
     exit 1
 }
+
+

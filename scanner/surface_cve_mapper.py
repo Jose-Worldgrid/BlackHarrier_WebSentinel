@@ -1,3 +1,5 @@
+# Modulo que relaciona CVE con rutas y superficie DOM descubierta del objetivo.
+
 """
 surface_cve_mapper.py
 Cruza cada CVE/familia de exploit con la superficie descubierta del objetivo
@@ -19,9 +21,9 @@ from urllib.parse import urlparse
 from typing import List, Dict, Any
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 def _safe(value: Any) -> str:
     return str(value or "").strip()
@@ -67,7 +69,7 @@ def _has_input_type(page: dict, input_type: str) -> bool:
     for inp in _inputs(page):
         if inp["type"] == t:
             return True
-    # Also scan raw HTML for <input type="file">, etc.
+
     return f'type="{t}"' in _html(page) or f"type='{t}'" in _html(page)
 
 
@@ -77,9 +79,9 @@ def _param_names_in_url(url: str) -> list[str]:
     return list(parse_qs(query).keys())
 
 
-# ---------------------------------------------------------------------------
-# Per-family matchers
-# ---------------------------------------------------------------------------
+
+
+
 
 def _match_sqli(pages: list) -> list:
     hits = []
@@ -104,7 +106,7 @@ def _match_sqli(pages: list) -> list:
                     ),
                     "confidence": 0.75,
                 })
-        # URL params also injectable
+
         for param in _param_names_in_url(url):
             hits.append({
                 "url": url,
@@ -385,22 +387,22 @@ def _match_dos(pages: list, target_url: str) -> list:
     return hits
 
 
-# ---------------------------------------------------------------------------
-# Dispatcher
-# ---------------------------------------------------------------------------
+
+
+
 
 _FAMILY_MATCHERS = {
     "SQL Injection":                    _match_sqli,
     "Cross-Site Scripting (XSS)":       _match_xss,
     "Remote Code Execution (RCE)":      _match_rce,
-    "Buffer Overflow":                  _match_rce,   # same surface: admin/api endpoints
+    "Buffer Overflow":                  _match_rce,
     "Authentication Bypass":            _match_auth_bypass,
     "Path Traversal / LFI":             _match_path_traversal,
     "Cross-Site Request Forgery (CSRF)":_match_csrf,
     "Server-Side Request Forgery (SSRF)":_match_ssrf,
     "Insecure Deserialization":         _match_rce,
     "XML External Entity (XXE)":        _match_rce,
-    "Open Redirect":                    _match_ssrf,  # url params in common
+    "Open Redirect":                    _match_ssrf,
     "Denial of Service (DoS)":          _match_dos,
 }
 
@@ -416,7 +418,7 @@ def map_cve_to_surface(
     """
     matcher = _FAMILY_MATCHERS.get(family)
     if matcher is None:
-        # Generic fallback: report any page with a form
+
         results = []
         seen = set()
         for page in pages or []:
@@ -440,7 +442,7 @@ def map_cve_to_surface(
     except Exception:
         return []
 
-    # Deduplicate by (url, field) and sort by confidence descending
+
     seen = set()
     unique = []
     for hit in sorted(raw, key=lambda h: h.get("confidence", 0), reverse=True):
@@ -464,7 +466,7 @@ def enrich_suggestions_with_surface(
         family = _safe(sug.get("family"))
         hits = map_cve_to_surface(family, pages, target_url=target_url, max_hits=4)
         sug["affected_surface"] = hits
-        # Also patch PoC with the first concrete URL if the PoC still has the generic TARGET
+
         if hits and "TARGET" in _safe(sug.get("poc")):
             best_url = _safe(hits[0].get("url"))
             if best_url:

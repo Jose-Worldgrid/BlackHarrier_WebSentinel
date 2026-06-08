@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para open redirect.
+
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from scanner.http_client import HttpClient
 

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para discovery.
+
 from urllib.parse import urljoin, urlparse
 from difflib import SequenceMatcher
 import re
@@ -272,7 +274,7 @@ def classify_url(requested_url, final_url, response, baseline=None):
             return "protected_redirect_to_auth"
         return "auth"
 
-    # Some frameworks return HTTP 200 with login HTML while staying on /admin URL.
+
     if admin_requested and looks_like_auth_gate:
         return "protected_redirect_to_auth"
 
@@ -411,7 +413,7 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
                 continue
             candidate_urls.append(text)
 
-    # preserve order + dedupe
+
     candidate_urls = list(dict.fromkeys(candidate_urls))[:max_active_checks]
     baseline = get_soft404_baseline(client, origin)
 
@@ -432,18 +434,18 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
             continue
 
         status_code = safe_status(page.get("status_code"))
-        
-        # Reclasificación: usar lógica completa que detecta redirecciones
-        # Crear un objeto response simulado con propiedades necesarias
+
+
+
         class FakeResponse:
             def __init__(self, status, headers_dict):
                 self.status_code = status
                 self.headers = headers_dict
                 self.text = page.get("html", "")
-        
+
         fake_response = FakeResponse(status_code, {"Content-Type": page.get("content_type", "")})
-        
-        # Si hay redirección efectiva, detect protected_redirect_to_auth
+
+
         if is_effective_redirect(requested_url, final_url):
             if any(x in final_url.lower() for x in ["login", "signin", "auth", "iniciar-sesion", "inicio-sesion"]):
                 if any(x in requested_url.lower() for x in ["admin", "panel", "dashboard", "private", "backoffice"]):
@@ -504,7 +506,7 @@ def discover_surface(base_url: str, client=None, seed_pages=None, max_active_che
                 try:
                     response = client.get(url)
                 except Exception as retry_exc:
-                    # Optional fallback: try plain HTTP if HTTPS certificate chain is broken.
+
                     fallback_url = to_http_url(url)
                     if fallback_url != url:
                         try:

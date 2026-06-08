@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para orchestrator.
+
 """
 Adaptive Learning Orchestrator
 Coordinates execution, analysis, learning, and payload generation into a cohesive learning loop.
@@ -43,7 +45,7 @@ class AdaptiveOrchestrator:
     def adaptive_attack_cycle(
         self,
         target_url: str,
-        attack_type: str,  # xss, sqli, ssti, etc.
+        attack_type: str,
         base_payload: str,
         executor_fn: Callable,
         max_iterations: int = 3,
@@ -76,7 +78,7 @@ class AdaptiveOrchestrator:
                 "best_variant": None,
             }
 
-            # Step 1: Generate payload variants
+
             variants = self.generator.generate_variants(
                 attack_type=attack_type,
                 base_payload=base_payload,
@@ -93,11 +95,11 @@ class AdaptiveOrchestrator:
                 for v in variants
             ]
 
-            # Step 2: Execute each variant and score results
+
             best_variant_this_round = None
             best_score = 0
 
-            for variant in variants[:5]:  # Limit to top 5 per iteration
+            for variant in variants[:5]:
                 try:
                     execution_record = self.executor.execute_attack(
                         attack_name=f"{attack_type}_{variant['variant']}",
@@ -114,7 +116,7 @@ class AdaptiveOrchestrator:
 
                     execution_records.append(execution_record)
 
-                    # Score the variant
+
                     variant_score = self.scoring_engine.score_payload(
                         attack_type=attack_type,
                         payload=variant["payload"],
@@ -132,12 +134,12 @@ class AdaptiveOrchestrator:
                     }
                     iteration_result["attempts"].append(attempt_info)
 
-                    # Track best variant
+
                     if variant_score > best_score:
                         best_score = variant_score
                         best_variant_this_round = attempt_info
 
-                    # Record success for learning
+
                     if execution_record["status"] == "success":
                         self.knowledge_base.record_attack_effectiveness(
                             attack_name=attack_type,
@@ -148,7 +150,7 @@ class AdaptiveOrchestrator:
                             reason="Successful execution",
                         )
 
-                        # Early exit on success
+
                         results["best_result"] = {
                             "iteration": iteration + 1,
                             "variant": variant["variant"],
@@ -171,7 +173,7 @@ class AdaptiveOrchestrator:
                         }
                     )
 
-            # Step 3: Analyze failure patterns
+
             if execution_records:
                 failure_analysis = self.analyzer.analyze_failure(
                     execution_record=execution_records[-1],
@@ -179,7 +181,7 @@ class AdaptiveOrchestrator:
                 )
                 iteration_result["analysis"] = failure_analysis
 
-                # Record in knowledge base
+
                 if failure_analysis.get("inferred_defenses"):
                     for defense in failure_analysis["inferred_defenses"]:
                         self.knowledge_base.record_filter_pattern(
@@ -190,7 +192,7 @@ class AdaptiveOrchestrator:
                             ),
                         )
 
-                # Track for next iteration
+
                 previous_failures.extend(
                     [
                         {
@@ -205,7 +207,7 @@ class AdaptiveOrchestrator:
             iteration_result["best_variant"] = best_variant_this_round
             results["iterations"].append(iteration_result)
 
-        # Step 4: Final learning from all attempts
+
         if execution_records:
             self._consolidate_learnings(
                 attack_type, framework, execution_records, results
@@ -230,7 +232,7 @@ class AdaptiveOrchestrator:
             reason=f"Success with variant: {variant['variant']}",
         )
 
-        # If this bypassed WAF, record the technique
+
         if execution_record.get("waf_indicators"):
             for waf in execution_record["waf_indicators"]:
                 self.knowledge_base.record_bypass_success(
@@ -248,14 +250,14 @@ class AdaptiveOrchestrator:
         results: Dict[str, Any],
     ):
         """Extract and persist patterns learned from all execution attempts."""
-        # Analyze which defenses were encountered most frequently
+
         defense_frequency = {}
         for record in execution_records:
             if record.get("detected_tech"):
                 for tech in record["detected_tech"]:
                     defense_frequency[tech] = defense_frequency.get(tech, 0) + 1
 
-        # Record top defenses
+
         for defense, count in sorted(
             defense_frequency.items(), key=lambda x: x[1], reverse=True
         )[:3]:
@@ -265,7 +267,7 @@ class AdaptiveOrchestrator:
                 detected_signature=defense,
             )
 
-        # Store learnings
+
         results["learned_patterns"] = [
             {"defense": d, "frequency": f} for d, f in list(defense_frequency.items())[:5]
         ]
@@ -277,16 +279,16 @@ class AdaptiveOrchestrator:
         Process full audit results to extract learnings for future attacks.
         Called after each complete security audit.
         """
-        # Extract frameworks and technologies
+
         frameworks = audit_results.get("detected_frameworks", [])
         waf_types = audit_results.get("detected_waf", [])
 
-        # Update environment profile
+
         self.knowledge_base.update_environment_profile(
             target_url=target_url, frameworks=frameworks, waf_types=waf_types
         )
 
-        # Record all vulnerability findings with context
+
         findings = audit_results.get("findings", [])
         for finding in findings:
             self.knowledge_base.record_attack_effectiveness(

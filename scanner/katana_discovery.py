@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para katana discovery.
+
 import json
 import os
 import re
@@ -41,7 +43,7 @@ def _looks_like_js_noise(line: str) -> bool:
     if not text:
         return True
 
-    # Ignore huge inline JS chunks frequently printed by tooling or responses.
+
     if len(text) > 800 and ("function " in text or "=>" in text or "{\"" in text):
         return True
 
@@ -52,7 +54,7 @@ def _looks_like_js_noise(line: str) -> bool:
     if len(text) > 220 and sum(1 for m in markers if m in text.lower()) >= 2:
         return True
 
-    # Dense symbols indicate code, not URL/path output.
+
     symbol_ratio = sum(1 for ch in text if ch in "{}();[]") / max(len(text), 1)
     if len(text) > 180 and symbol_ratio > 0.18:
         return True
@@ -99,7 +101,7 @@ def _extract_candidates_from_line(raw_line: str, target_url: str):
 
     candidates = []
 
-    # 1) JSON line output from katana
+
     if line.startswith("{") and line.endswith("}"):
         try:
             obj = json.loads(line)
@@ -116,11 +118,11 @@ def _extract_candidates_from_line(raw_line: str, target_url: str):
         except Exception:
             pass
 
-    # 2) Full absolute URLs found in plain output line
+
     for match in URL_RE.findall(line):
         candidates.append(match)
 
-    # 3) Relative endpoint line
+
     if REL_PATH_RE.match(line):
         candidates.append(line)
 

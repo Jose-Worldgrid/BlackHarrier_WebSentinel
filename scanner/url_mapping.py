@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para url mapping.
+
 from urllib.parse import urljoin, urlparse
 import logging
 from bs4 import BeautifulSoup

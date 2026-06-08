@@ -1,3 +1,5 @@
+# Modulo cliente HTTP comun con control de reintentos, SSL y captura de solicitudes.
+
 import time
 import warnings
 from urllib.parse import urlparse
@@ -6,9 +8,9 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import urllib3
-# NOTE: Do NOT suppress InsecureRequestWarning globally.
-# Warnings are suppressed per-request only when verify_ssl is intentionally False.
-# Suppressing them globally would mask real MITM indicators during audits.
+
+
+
 
 
 DEFAULT_TIMEOUT = 15

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para auth sqli.
+
 from scanner.browser_auth import scan_browser_auth_sqli
 
 

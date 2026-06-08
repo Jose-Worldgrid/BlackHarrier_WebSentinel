@@ -1,3 +1,5 @@
+# Modulo de configuracion global con constantes y perfiles de ejecucion de la herramienta.
+
 APP_NAME = "BlackHarrier Web Sentinel"
 APP_SUBTITLE = "Offensive Web Audit Platform by Jose"
 

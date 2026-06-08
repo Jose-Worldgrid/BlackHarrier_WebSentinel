@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para tech fingerprint.
+
 import re
 import logging
 from bs4 import BeautifulSoup

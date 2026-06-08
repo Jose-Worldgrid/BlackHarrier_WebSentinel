@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para analyzer.
+
 """
 Failure Analysis and Heuristic Learning
 Infers defensive mechanisms and generates mitigation strategies.
@@ -68,20 +70,20 @@ class FailureAnalyzer:
         if execution_record.get("result") == "success":
             return {**analysis, "reasoning": "Attack succeeded - no remediation needed"}
 
-        # Collect evidence
+
         response_body = execution_record.get("response_body_sample", "").lower()
         status = execution_record.get("http_status", 0)
         waf_indicators = execution_record.get("waf_indicators", [])
         response_headers = execution_record.get("response_headers", {})
         elapsed_ms = execution_record.get("elapsed_ms", 0)
 
-        # Infer defensive patterns
+
         detected_defenses = self._infer_defenses(
             response_body, status, waf_indicators, response_headers, elapsed_ms
         )
         analysis["inferred_defenses"] = detected_defenses
 
-        # Generate bypass strategies
+
         bypass_strategies = self._generate_bypass_strategies(detected_defenses)
         analysis["probable_bypass_strategies"] = bypass_strategies
         analysis["confidence"] = self._calculate_confidence(detected_defenses)
@@ -103,7 +105,7 @@ class FailureAnalyzer:
         """Infer which defensive mechanisms are active."""
         defenses = []
 
-        # WAF detection
+
         if waf_indicators:
             defenses.append(
                 {
@@ -113,7 +115,7 @@ class FailureAnalyzer:
                 }
             )
 
-        # Rate limiting
+
         if status == 429 or "retry-after" in str(response_headers).lower():
             defenses.append(
                 {
@@ -123,7 +125,7 @@ class FailureAnalyzer:
                 }
             )
 
-        # CSP detection
+
         if "content-security-policy" in str(response_headers).lower():
             defenses.append(
                 {
@@ -133,7 +135,7 @@ class FailureAnalyzer:
                 }
             )
 
-        # Input sanitization/validation
+
         if any(
             x in response_body
             for x in ["invalid", "syntax error", "escaped", "stripped"]
@@ -146,7 +148,7 @@ class FailureAnalyzer:
                 }
             )
 
-        # Authentication/authorization
+
         if status in [401, 403]:
             defenses.append(
                 {
@@ -156,7 +158,7 @@ class FailureAnalyzer:
                 }
             )
 
-        # Possible anti-automation
+
         if elapsed_ms > 2000:
             defenses.append(
                 {

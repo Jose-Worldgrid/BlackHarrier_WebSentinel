@@ -1,3 +1,5 @@
+# Modulo de persistencia de auditorias y utilidades de almacenamiento cifrado.
+
 """
 Audit results storage with AES-256-GCM encryption at rest.
 
@@ -16,12 +18,12 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Key management
-# ---------------------------------------------------------------------------
+
+
+
 
 _KEY_FILE = Path(__file__).parent / ".db_key"
-_KEY_LEN = 32  # 256-bit AES key
+_KEY_LEN = 32
 
 
 def _load_or_create_key() -> bytes:
@@ -30,20 +32,20 @@ def _load_or_create_key() -> bytes:
         raw = _KEY_FILE.read_bytes()
         if len(raw) >= _KEY_LEN:
             return raw[:_KEY_LEN]
-    # First run: generate a cryptographically secure random key
+
     key = secrets.token_bytes(_KEY_LEN)
     _KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     _KEY_FILE.write_bytes(key)
     try:
         _KEY_FILE.chmod(0o600)
     except Exception:
-        pass  # Windows – best effort
+        pass
     return key
 
 
-# ---------------------------------------------------------------------------
-# Encryption helpers (AES-256-GCM via stdlib only, Python ≥ 3.9)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _encrypt(plaintext: str, key: bytes) -> str:
     """
@@ -59,7 +61,7 @@ def _encrypt(plaintext: str, key: bytes) -> str:
         ct = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), None)
         return "gcm:" + base64.b64encode(nonce + ct).decode("ascii")
     except ImportError:
-        # cryptography package not installed — store as base64 with a warning
+
         import base64
         import warnings
         warnings.warn(
@@ -86,13 +88,13 @@ def _decrypt(blob: str, key: bytes) -> str:
     if blob.startswith("b64:"):
         import base64
         return base64.b64decode(blob[4:]).decode("utf-8")
-    # Legacy plaintext (pre-encryption upgrade) — return as-is
+
     return blob
 
 
-# ---------------------------------------------------------------------------
-# DB path — store outside the project tree to reduce accidental exposure
-# ---------------------------------------------------------------------------
+
+
+
 
 DB_PATH = str(Path(__file__).parent / "audit_results.db")
 

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para cve intel.
+
 import requests
 
 
@@ -23,7 +25,7 @@ def _fetch_epss_scores(cve_ids, timeout=8.0):
         return scores
 
     session = requests.Session()
-    # Keep batches small to avoid proxy/gateway URL limits.
+
     for batch in _chunks(ids, 40):
         try:
             response = session.get(

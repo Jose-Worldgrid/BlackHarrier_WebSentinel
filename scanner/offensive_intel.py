@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para offensive intel.
+
 import json
 import ipaddress
 import re
@@ -482,7 +484,7 @@ def build_asset_intel_rows(*, target_url: str, external_targets: dict, nmap_data
                 "reason": "Endpoint sensible descubierto en crawling/discovery.",
             })
 
-    # Deduplicate candidates by target+kind preserving highest score.
+
     dedup = {}
     for ct in candidate_targets:
         key = f"{ct.get('kind')}::{ct.get('target')}"

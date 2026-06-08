@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para user enum.
+
 from urllib.parse import urljoin
 
 from scanner.http_client import HttpClient

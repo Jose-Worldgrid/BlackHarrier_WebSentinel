@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para tool detection.
+
 import os
 import shutil
 

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para crawler.
+
 from collections import deque
 import logging
 from urllib.parse import urljoin, urlparse, urldefrag, parse_qs
@@ -177,7 +179,7 @@ def extract_links(current_url: str, html: str) -> set[str]:
     for tag in soup.find_all(attrs={"data-url": True}):
         links.add(urljoin(current_url, tag["data-url"]))
 
-    # Extrae rutas embebidas en JS/HTML: "/login", "/api/...", etc.
+
     route_candidates = re.findall(
         r"""["'`](\/[a-zA-Z0-9_\-\/.?=&%#]+)["'`]""",
         html or ""
@@ -304,7 +306,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
                     logger.warning("Crawler request failed for %s: %s: %s", current, type(retry_exc).__name__, retry_exc)
                     continue
             else:
-                # Last chance: if HTTPS target fails repeatedly, try HTTP downgrade.
+
                 fallback_url = to_http_url(current)
                 if fallback_url != current:
                     try:
@@ -330,7 +332,7 @@ def crawl_site(base_url: str, max_pages: int | None = None, client=None, hard_li
 
         final_url = normalize_url(response.url or current)
 
-        # Drop external redirects immediately; they are out of scope.
+
         if not _same_origin(base_url, final_url):
             logger.debug("Crawler skipping out-of-scope redirect: %s -> %s", current, final_url)
             continue

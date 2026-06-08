@@ -1,3 +1,5 @@
+# Modulo de pruebas para test scanner regressions.
+
 import unittest
 from unittest.mock import patch
 

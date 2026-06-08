@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para access control.
+
 import re
 import logging
 from difflib import SequenceMatcher
@@ -45,7 +47,7 @@ def _extract_id_params(url):
         if val.isdigit() or uuid_re.match(val):
             id_params[k] = val
 
-    # Also detect numeric path segments: /users/42, /items/uuid
+
     path = parsed.path
     segments = path.strip("/").split("/")
     for i, seg in enumerate(segments):
@@ -59,7 +61,7 @@ def _mutate_id(value):
     """Generate nearby IDs to fuzz for IDOR."""
     uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
     if uuid_re.match(value):
-        # Replace last segment with zeros and ones to probe other resources
+
         return [
             "00000000-0000-0000-0000-000000000001",
             "00000000-0000-0000-0000-000000000002",
@@ -100,7 +102,7 @@ def _test_idor_param(client, url, param, original_value, original_response):
             sim = _similarity(body, orig_body)
             content_diff = abs(len(body) - len(orig_body))
 
-            # Different content of similar size = likely different resource (IDOR candidate)
+
             if 0.30 < sim < 0.92 and content_diff > 100:
                 results.append({
                     "control": f"IDOR posible: {param}={mutated_val}",
@@ -207,7 +209,7 @@ def scan_access_control(target_url, pages, client=None):
     results = []
     base = origin(target_url)
 
-    # 1. Sensitive endpoints
+
     for endpoint in SENSITIVE_ENDPOINTS:
         url = base + endpoint
 
@@ -238,7 +240,7 @@ def scan_access_control(target_url, pages, client=None):
         except Exception:
             continue
 
-    # 2. IDOR-like numeric/UUID parameter probing
+
     for page in (pages or [])[:MAX_IDOR_PAGES]:
         page_url = page.get("final_url") or page.get("url") or ""
         id_params = _extract_id_params(page_url)

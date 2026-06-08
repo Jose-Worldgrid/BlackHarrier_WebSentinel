@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para auth.
+
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from scanner.http_client import HttpClient
@@ -5,7 +7,7 @@ from scanner.http_client import HttpClient
 USERNAME_HINTS = ["user", "username", "email", "login", "usuario", "correo", "identifier", "mail"]
 PASSWORD_HINTS = ["pass", "password", "pwd", "contraseña", "passwd", "clave"]
 
-# Markers indicating a successful login (broad coverage across ES/EN apps)
+
 SUCCESS_MARKERS = [
     "logout", "log out", "log-out", "sign out", "sign-out",
     "cerrar sesión", "cerrar sesion", "salir", "desconectar",
@@ -16,7 +18,7 @@ SUCCESS_MARKERS = [
     "gestión", "gestion", "control panel", "backend",
 ]
 
-# Markers indicating a failed login
+
 FAILURE_MARKERS = [
     "incorrect", "invalid", "wrong", "failed", "failure",
     "credenciales incorrectas", "credenciales inválidas", "usuario no encontrado",
@@ -81,7 +83,7 @@ def _authenticate_dynamic_login(client, login_url, username, password):
             "cookies_loaded": 0,
         }
 
-    # Keep only strong post-login markers; avoid weak terms that appear in public nav.
+
     success_markers = [
         "logout",
         "log out",
@@ -188,7 +190,7 @@ def _authenticate_dynamic_login(client, login_url, username, password):
             has_protected_posts = any(_looks_like_protected_post_request(u) for u in network_posts)
 
             if not has_auth_cookie and not has_protected_posts and final_is_login_like and not has_fail_marker:
-                # Retry once in-place: some SPA flows need a second submit trigger.
+
                 try:
                     click_login(page, password_input=password_input)
                 except Exception:
@@ -220,7 +222,7 @@ def _authenticate_dynamic_login(client, login_url, username, password):
                 final_is_login_like = any(tok in final_path for tok in ("login", "signin", "auth", "session"))
                 has_protected_posts = any(_looks_like_protected_post_request(u) for u in network_posts)
 
-            # Success requires robust evidence: redirect away from login or explicit auth cookies.
+
             if (moved_from_login and not final_is_login_like and not has_fail_marker) or has_auth_cookie or has_protected_posts:
                 status = "Autenticado"
                 severity = "Informativa"
@@ -290,7 +292,7 @@ def authenticate(login_url: str, username: str, password: str, verify_ssl: bool 
         forms = soup.find_all("form")
 
         if not forms:
-            # No HTML forms — SPA/dynamic login: use Playwright
+
             fallback = _authenticate_dynamic_login(client, login_url, username, password)
             return client, [{
                 "control": "Autenticación",
@@ -304,12 +306,12 @@ def authenticate(login_url: str, username: str, password: str, verify_ssl: bool 
                 "recommendation": "Validar sesión post-login con ruta protegida y cookies sincronizadas."
             }]
 
-        # Classic HTML form login
+
         form = forms[0]
         action = urljoin(login_url, form.get("action") or login_url)
         method = (form.get("method") or "POST").upper()
 
-        # Build payload from form fields
+
         data = {}
         for field in form.find_all(["input", "textarea", "select"]):
             name = field.get("name")
@@ -323,7 +325,7 @@ def authenticate(login_url: str, username: str, password: str, verify_ssl: bool 
             elif any(h in lower for h in PASSWORD_HINTS):
                 data[name] = password
             elif field.get("type", "").lower() not in ("submit", "button", "reset", "image"):
-                data[name] = value  # preserve hidden tokens (CSRF, etc.)
+                data[name] = value
 
         if method == "POST":
             login_response = client.post(action, data=data)
@@ -334,12 +336,12 @@ def authenticate(login_url: str, username: str, password: str, verify_ssl: bool 
         final_url = str(login_response.url or "")
         status_code = int(getattr(login_response, "status_code", 0) or 0)
 
-        # Detect success via: markers OR redirect away from login URL
+
         login_base = urlparse(login_url).path.rstrip("/")
         final_base = urlparse(final_url).path.rstrip("/")
         redirected_away = bool(final_base and final_base != login_base and "login" not in final_base)
 
-        # Check for auth session cookies
+
         auth_cookies = [
             c for c in client.session.cookies
             if any(tok in str(c.name or "").lower() for tok in
@@ -382,7 +384,7 @@ def authenticate(login_url: str, username: str, password: str, verify_ssl: bool 
         })
 
     except Exception as exc:
-        # If TLS trust chain fails, retry once with SSL verification disabled.
+
         if verify_ssl and "CERTIFICATE_VERIFY_FAILED" in str(exc).upper():
             retry_client, retry_results = authenticate(
                 login_url,

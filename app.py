@@ -1,3 +1,5 @@
+# Modulo principal que orquesta la interfaz, el flujo de auditoria y la consolidacion de resultados.
+
 import html
 import os
 import re
@@ -237,7 +239,7 @@ def _collect_login_candidates(target_url, pages, manual_login_url=""):
     if not candidates:
         candidates.append(target_url)
 
-    # Add stable login path variants early to improve auth reliability.
+
     seeds = [manual_login_url.strip()] if manual_login_url else []
     seeds.extend(candidates)
     for seed in seeds:
@@ -251,7 +253,7 @@ def _collect_login_candidates(target_url, pages, manual_login_url=""):
         candidates.append(f"{base}/login")
         candidates.append(f"{base}/es/login")
 
-    # Preserve order while deduplicating, but prioritize stable login paths.
+
     unique = list(dict.fromkeys(candidates))
     original_pos = {url: idx for idx, url in enumerate(unique)}
 
@@ -1065,11 +1067,11 @@ with st.sidebar:
 
     mode_defaults = SCAN_MODES.get(scan_mode, {})
 
-    # Motor unificado: BlackHarrier Core. Nmap puede enriquecer en segundo plano si está disponible.
+
     import shutil as _shutil
     import os as _os
-    # shutil.which may miss Nmap if PATH was not refreshed after install.
-    # Check known Windows install locations as fallback.
+
+
     _NMAP_FALLBACK_PATHS = [
         r"C:\Program Files (x86)\Nmap\nmap.exe",
         r"C:\Program Files\Nmap\nmap.exe",
@@ -1101,9 +1103,9 @@ with st.sidebar:
     nmap_timeout_seconds = 420
     nmap_scripts = ""
 
-    # Auto-configuración de Nessus (sin UI adicional): se activa cuando hay credenciales en entorno.
-    # Variables soportadas: NESSUS_ACCESS_KEY, NESSUS_SECRET_KEY, NESSUS_BASE_URL,
-    # NESSUS_VERIFY_SSL, NESSUS_POLL_SECONDS, NESSUS_TEMPLATE_UUID.
+
+
+
     nessus_mode = "nessus-local"
     nessus_base_url = str(os.getenv("NESSUS_BASE_URL", "https://localhost:8834")).strip()
     nessus_access_key = str(os.getenv("NESSUS_ACCESS_KEY", "")).strip()
@@ -1120,7 +1122,7 @@ with st.sidebar:
     if enable_nessus:
         st.caption("Nessus integrado automáticamente para cobertura ampliada de vulnerabilidades.")
 
-    # ── Agente IA – Exploit Suggester ────────────────────────────────────
+
     st.markdown("**Agente IA – Propuesta de exploits**")
     import shutil as _shutil2
     _ollama_bin = _shutil2.which("ollama") or _shutil2.which("ollama.exe")
@@ -1308,8 +1310,8 @@ def _run_raw(func, *args):
 
 
 def run_offensive_module(label, module_name, func, pages, *args):
-    # Always execute offensive modules at least once, even when discovered pages are empty.
-    # This prevents "No probado" due to empty scope and keeps the report conclusive.
+
+
     effective_pages = list(pages or [])
 
     if not effective_pages:
@@ -1796,7 +1798,7 @@ def deduplicate_results(all_results):
             + _severity_rank(current.get("Severidad"))
         )
 
-        # Preserve the strongest row as base and enrich evidence with source module.
+
         if current_score > existing_score:
             base = current
             extra = existing
@@ -1871,8 +1873,8 @@ def apply_false_positive_guard(all_results, pages, strict_mode=False):
         module_name = str(current.get("Módulo", "") or "")
         module_name_l = module_name.lower()
 
-        # Nmap findings are deterministic network observations (ports/services).
-        # Do not apply offensive anti-FP severity downgrades to reconnaissance data.
+
+
         if module_name_l.startswith("nmap reconnaissance"):
             reviewed.append(current)
             continue
@@ -1893,7 +1895,7 @@ def apply_false_positive_guard(all_results, pages, strict_mode=False):
         confidence = strength + corroboration
 
         if status == "Hallazgo":
-            # Guard-rail: never auto-classify confirmed findings as false positives.
+
             current["Evidencia"] = (
                 f"{current.get('Evidencia', '')} | "
                 "Control anti-FP: hallazgo confirmado conservado (sin descarte automático)."
@@ -2031,7 +2033,7 @@ def _looks_like_not_found_page(page):
     if not any(marker in html_text for marker in strong_not_found_markers):
         return False
 
-    # Avoid false negatives on real login pages that still contain 404 words in scripts/assets.
+
     if has_auth_form_indicators(page) or _has_password_runtime_indicator(page):
         return False
 
@@ -2200,7 +2202,7 @@ def _is_verified_auth_login_page(page):
     if _has_password_runtime_indicator(page) and has_auth_path:
         return True
 
-    # Keep explicit auth gates (401/403) but avoid generic/empty auth labels with no form evidence.
+
     if classification == "auth" and status in {401, 403}:
         return True
 
@@ -2223,7 +2225,7 @@ def build_auth_attack_pages(pages):
         if is_admin_redirect_to_auth(page):
             continue
 
-        # Keep admin candidates out of auth SQLi target set; they are tested in access control.
+
         if classification == "admin_candidate":
             continue
 
@@ -2273,7 +2275,7 @@ def _ensure_login_target_first(auth_targets, all_pages, auth_used_login_url, aut
     if not login_key:
         return targets
 
-    # Reuse existing page object when possible.
+
     selected = None
     for page in all_pages or []:
         page_key = _canonical_surface_url(page.get("final_url") or page.get("url") or "")
@@ -2290,7 +2292,7 @@ def _ensure_login_target_first(auth_targets, all_pages, auth_used_login_url, aut
             "forms": [],
         }
 
-    # If forced login target has no forms/inputs, borrow evidence from equivalent auth pages.
+
     forms_count = len(selected.get("forms") or [])
     runtime_inputs = selected.get("browser_inputs") or (selected.get("browser_runtime") or {}).get("inputs") or []
     if forms_count == 0 and not runtime_inputs:
@@ -2338,7 +2340,7 @@ def is_generic_attack_page(page):
     if classification == "protected_redirect_to_auth":
         return False
 
-    # Login/registration with credentials fields must be attackable even if page text contains generic blockers.
+
     if classification in ["auth", "registration"] and has_auth_form_indicators(page):
         return True
 
@@ -2350,15 +2352,15 @@ def is_generic_attack_page(page):
     if is_redirected_page(page) and not is_auth_like_page(page):
         return False
 
-    # Treat pages with no status_code as accessible (URL harvested from HTML, not direct request)
+
     if not status:
         return True
 
-    # Accept 2xx and 3xx; exclude 4xx/5xx (except 401/403 which may still have forms)
+
     if status.startswith("2") or status.startswith("3"):
         return True
 
-    # 401/403 pages may expose forms behind auth — still worth probing
+
     if status in ("401", "403"):
         return bool(page.get("forms"))
 
@@ -2578,7 +2580,7 @@ def _collect_post_login_candidate_endpoints(pages, max_items=30, *, target_url="
         ai_context = page.get("ai_context") or {}
         runtime = page.get("browser_runtime") or {}
         for endpoint in (ai_context.get("candidate_endpoints") or []) + (runtime.get("candidate_endpoints") or []):
-            # Runtime/API hints are only accepted if they match a verified discovered surface URL.
+
             _add_endpoint(endpoint, require_known_surface=True)
             if len(endpoints) >= max_items:
                 return endpoints
@@ -2625,7 +2627,7 @@ def _collect_verified_http_events(target_url, events, *, max_items=80):
             continue
 
         status = int(event.get("status_code", 0) or 0)
-        # Keep actionable/validated responses only.
+
         if status not in {200, 201, 202, 204, 301, 302, 303, 307, 308, 401, 403}:
             continue
 
@@ -3035,7 +3037,7 @@ def _collect_nmap_service_cves(nmap_structured, *, max_services=24, max_cves_per
             reverse=True,
         )
 
-        # Keep CVEs likely affecting the detected version first; include very high-score tails.
+
         top = [x for x in ranked if bool(x.get("likely_affected", True))]
         if max_cves_per_service:
             top = top[:max_cves_per_service]
@@ -3149,8 +3151,8 @@ def _select_actionable_cves(cves):
         source = str(cve.get("source") or "").lower()
         sev = str(cve.get("severity") or "").lower()
 
-        # Keep only CVEs that are either actively exploited/likely exploitable,
-        # and avoid weak low-relevance noise.
+
+
         if kev or epss >= 0.30:
             selected.append(cve)
             continue
@@ -3161,8 +3163,8 @@ def _select_actionable_cves(cves):
             selected.append(cve)
             continue
 
-        # Preserve CVEs discovered by external Nuclei/CIRCL pipeline even when
-        # enrichment is partial (e.g., EPSS unavailable) to keep exploit workflow visible.
+
+
         if source in {"nuclei", "nuclei-circl", "results-fallback"} and sev in {"critical", "high", "medium", "alta", "media", "crítica", "critica"}:
             selected.append(cve)
             continue
@@ -3240,7 +3242,7 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
                 if technique:
                     st.markdown(f"**Técnica:** {technique}")
 
-                # ── Superficie afectada (ruta + DOM) ──────────────────
+
                 surface_hits = sug.get("affected_surface") or []
                 if surface_hits:
                     st.markdown("**Superficie afectada en el objetivo**")
@@ -3274,7 +3276,7 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
                 if sug.get("description"):
                     st.caption(f"Descripción: {sug['description'][:220]}...")
 
-                # ── PoC contextualizado con primera URL de superficie ──
+
                 surface_hits = sug.get("affected_surface") or []
                 best_surface = surface_hits[0] if surface_hits else None
                 st.markdown("**PoC (entorno controlado)**")
@@ -3313,7 +3315,7 @@ def _render_cve_findings_panel(*, cves, target_url, pages=None, enable_exploit_a
     except Exception:
         suggestions = []
 
-    # Enrich with specific routes and DOM context from the discovered surface
+
     if suggestions and pages:
         try:
             from scanner.surface_cve_mapper import enrich_suggestions_with_surface
@@ -3349,7 +3351,7 @@ def _render_cve_findings_panel(*, cves, target_url, pages=None, enable_exploit_a
             }
             for item in fallback
         ]
-        # Enrich fallback as well
+
         if pages:
             try:
                 from scanner.surface_cve_mapper import enrich_suggestions_with_surface
@@ -3495,9 +3497,9 @@ def _scan_phase1(
     effective_auth_payload_limit = resolve_payload_limit(scan_payload_limit, max_auth_sqli_payloads)
     effective_proxy_url = burp_proxy_url.strip() if use_burp_proxy else None
 
-    # Phase 1: Desabilitar SSL verification para módulos pasivos
-    # Los módulos de reconnaissance (headers, cookies, CORS, etc.) no requieren SSL strict
-    # porque no realizan pruebas ofensivas. Esto evita errores con certificados autofirmados.
+
+
+
     _configure_http_defaults_compat(delay=scan_delay, verify_ssl=False, proxy_url=effective_proxy_url)
     auth_client = HttpClient(verify_ssl=False)
     if hasattr(auth_client, "enable_http_capture"):
@@ -3612,7 +3614,7 @@ def _scan_phase1(
         pages = crawler_pages
         st.warning("Discovery activo no devolvió páginas útiles. Se continúa con la superficie del crawler.")
 
-    # Safe, low-noise user enumeration before trying provided credentials.
+
     enum_results = scan_user_enumeration(
         pages=pages,
         client=auth_client,
@@ -3620,7 +3622,7 @@ def _scan_phase1(
     )
     all_results.extend(normalize_results("Enumeración de usuarios", enum_results))
 
-    # Auth flow after initial mapping: discover first, then try credentials, then expand scope post-login.
+
     if use_auth and username and password:
         effective_login_url = (login_url or "").strip()
 
@@ -3684,7 +3686,7 @@ def _scan_phase1(
                 auth_cookie_snapshot = {}
                 auth_cookie_details_snapshot = []
 
-        # If auth appears successful (or plausible), run post-auth crawl/discovery to expand protected scope.
+
         if auth_status in ["Autenticado", "Indeterminado"]:
             history_start_idx = len(getattr(auth_client, "request_history", []) or [])
             with st.spinner("Sesión establecida. Ejecutando recrawl post-login para descubrir superficie autenticada..."):
@@ -3705,7 +3707,7 @@ def _scan_phase1(
                         page_key = _canonical_surface_url(page.get("final_url") or page.get("url"))
                         page["is_new_post_login"] = bool(page_key and page_key not in pre_auth_surface_keys)
 
-                    # Probe only authenticated routes that were actually observed in HTML/forms/runtime.
+
                     _dynamic_post_login_hints = _extract_post_login_route_hints(target_url, post_auth_pages, max_hints=80)
                     _parsed_origin = urlparse(target_url)
                     _origin_base = f"{_parsed_origin.scheme}://{_parsed_origin.netloc}"
@@ -3976,7 +3978,7 @@ def _scan_phase1(
     all_results.extend(run_module("Escaneando puertos/servicios comunes...", "Puertos y servicios", scan_port_services, target_url, port_scan_profile))
     all_results.extend(run_module("Correlando exposición tecnológica (Nessus-like)...", "Correlación de vulnerabilidades", scan_vulnerability_correlation, target_url, vuln_corr_profile))
 
-    # ── Advanced external recon (Nmap + Nessus/Tenable) ─────────────────
+
     external_targets = collect_external_scan_targets(
         target_url=target_url,
         pages=pages,
@@ -3986,7 +3988,7 @@ def _scan_phase1(
 
     nmap_structured = {"hosts": []}
     nessus_structured = {"scan_id": None, "vulnerabilities": []}
-    _all_cves_found: list = []  # flat CVE list for exploit suggester
+    _all_cves_found: list = []
     external_hosts = external_targets.get("hosts", [])
     candidate_targets = []
     external_target_limit = _compute_external_target_limit(
@@ -4011,8 +4013,8 @@ def _scan_phase1(
         nmap_status = st.empty()
 
         def nmap_progress(event):
-            # Called from background reader thread — NEVER touch Streamlit UI here.
-            # Accumulate into a thread-safe queue; drained after run_nmap_recon returns.
+
+
             try:
                 _nmap_queue.put_nowait(event)
             except Exception:
@@ -4043,7 +4045,7 @@ def _scan_phase1(
             if nmap_cves:
                 _all_cves_found.extend(nmap_cves)
 
-        # Drain progress queue and show last meaningful event in UI (safe — main thread).
+
         last_event: dict | None = None
         while not _nmap_queue.empty():
             try:
@@ -4057,7 +4059,7 @@ def _scan_phase1(
                 f"[NMAP] Completado | Último host: {_nmap_host} | Detalle: {_nmap_detail[:120]}"
             )
 
-    # Execute vulnerability scanning (Nessus or Free Scanner)
+
     if enable_nessus and external_target_limit > 0:
         nessus_status = st.empty()
 
@@ -4094,21 +4096,21 @@ def _scan_phase1(
             )
         all_results.extend(normalize_results("Nessus/Tenable", nessus_rows))
         _all_cves_found.extend(_collect_cves_from_nessus_structured(nessus_structured))
-    
+
     if use_free_scanner:
         free_status = st.empty()
-        
+
         def free_scanner_progress(msg, progress_pct):
             free_status.markdown(f"[BlackHarrier SCANNER] {msg} ({progress_pct}%)")
-        
+
         free_assessment = FreeAssessment(timeout=5.0, max_workers=50)
-        
-        # Determine scan type based on user selection
+
+
         port_type = "tcp" if free_scanner_depth == "Rápido" else "both"
-        
+
         with st.spinner("Ejecutando escaneo de vulnerabilidades..."):
             try:
-                # Scan external targets
+
                 free_target_limit = _compute_free_scanner_target_limit(
                     scan_mode=scan_mode,
                     hosts_count=len(external_hosts),
@@ -4128,21 +4130,21 @@ def _scan_phase1(
 
                 for target in targets_to_scan:
                     free_status.markdown(f"[BlackHarrier SCANNER] Escaneando {target}...")
-                    
+
                     assessment = free_assessment.run_full_assessment(
                         target=target,
                         include_dns=(free_scanner_depth == "Completo"),
                         port_type=port_type,
                         progress_callback=lambda msg, pct: free_scanner_progress(f"{target}: {msg}", pct)
                     )
-                    
-                    # Convert to normalized results
+
+
                     free_rows = assessment.get("normalized_results", [])
                     all_results.extend(normalize_results("BlackHarrier Scanner", free_rows))
 
                     nessus_structured["vulnerabilities"].extend(free_rows)
 
-                    # Collect flat CVE list for exploit suggester
+
                     for cve_entry in assessment.get("phases", {}).get("cve_lookup") or []:
                         svc = str(cve_entry.get("service") or "")
                         ver = str(cve_entry.get("version") or "")
@@ -4154,9 +4156,9 @@ def _scan_phase1(
                                 cve.setdefault("service", svc)
                                 cve.setdefault("version", ver)
                                 _all_cves_found.append(cve)
-                
+
                 free_status.markdown("✓ BlackHarrier Scanner completado")
-            
+
             except Exception as e:
                 st.warning(f"⚠️ Error en BlackHarrier Scanner: {str(e)[:200]}")
                 all_results.extend(normalize_results("BlackHarrier Scanner", [{
@@ -4169,7 +4171,7 @@ def _scan_phase1(
                 }]))
 
 
-    # Future AI planner contract (internal only, no external AI call)
+
     ai_contract = build_ai_recon_contract(
         targets=external_targets,
         nmap_data=nmap_structured,
@@ -4226,7 +4228,7 @@ def _scan_phase1(
     all_results.extend(run_module("Analizando CSRF...", "CSRF", scan_csrf_from_pages, pages))
     all_results.extend(run_module("Fingerprinting avanzado de tecnologías...", "Fingerprinting avanzado", scan_technology_fingerprint, target_url, pages))
 
-    # Optional external OSS cascade (Katana -> Feroxbuster -> Nmap -> Nuclei) with strict dedup.
+
     try:
         external_auth_params = _build_external_auth_params(auth_status, auth_cookies)
         external_fuzz_wordlist = str(os.getenv("EXTERNAL_FUZZ_WORDLIST", "") or "").strip()
@@ -4261,7 +4263,7 @@ def _scan_phase1(
             "recommendation": "Verificar binarios locales y PATH para herramientas externas.",
         }]))
 
-    # Optional Kali-style quick fingerprint stage (WhatWeb/WAFW00F when available).
+
     try:
         kali_rows = run_kali_quick_fingerprint(target_url)
         if kali_rows:
@@ -4311,7 +4313,7 @@ def _scan_phase1(
     )
     attackable_pages = dedupe_pages_by_url([p for p in pages if is_generic_attack_page(p)])
 
-    # Safety net: if generic filter yields zero but auth/registration pages exist, use them as attackable scope.
+
     if not attackable_pages:
         auth_fallback = [
             p for p in pages
@@ -4716,13 +4718,13 @@ if run_scan:
 
     _render_phase1_summary(state)
 
-    # ── Partial results (passive only) ─────────────────────────────
+
     partial_df = pd.DataFrame(state["all_results"])
     st.session_state["last_audit_df"] = partial_df
 
     st.markdown("---")
     st.success(f"Reconocimiento completado. Páginas: {len(state['pages'])} | Atacables: {len(state['attackable_pages'])} | Auth targets: {len(state['auth_attack_pages'])}")
-    # Rerender to enter the elif branch where the attack button is rendered
+
     st.rerun()
 
 elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_done"):
@@ -4745,7 +4747,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         exploit_ai_model=str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3"),
     )
 
-    # ── Targets detail before confirming attack ──────────────────────────
+
     attackable_pages_preview = state.get("attackable_pages") or []
     auth_attack_pages_preview = state.get("auth_attack_pages") or []
 
@@ -4796,7 +4798,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     if not run_offensive:
         st.stop()
 
-    # ── Phase 2: pull context from session state ─────────────────────────
+
     is_aggressive_mode    = state["is_aggressive_mode"]
     scan_payload_limit    = state["scan_payload_limit"]
     effective_auth_payload_limit = state["effective_auth_payload_limit"]
@@ -4872,7 +4874,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
 
     allow_offensive_actions = True
 
-    # ── Parallel offensive HTTP modules (all independent, no Playwright) ────
+
     if allow_offensive_actions:
         effective_pages = attackable_pages or [{
             "url": target_url, "final_url": target_url,
@@ -5007,7 +5009,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             "recommendation": "Confirmar autorización ofensiva si se quiere ejecutar la batería de explotación controlada.",
         }]))
 
-    # ── Auth SQLi (Playwright browser — sequential, must stay single-threaded) ──
+
     if auth_status == "Autenticado":
         auth_sqli_results = [{
             "control": "SQLi/bypass en autenticación",
@@ -5067,7 +5069,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
 
     attack_finished("Ejecución ofensiva finalizada.")
 
-    # ── Agente IA – Propuesta de Exploits ───────────────────────────────────
+
     _cves_for_exploits = list(state.get("all_cves_found") or [])
     _cves_fallback_from_results = _collect_cves_from_results_rows(all_results)
     if _cves_fallback_from_results:
@@ -5086,7 +5088,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                     use_ollama=True,
                     max_ai_queries=5,
                 )
-            # Enrich with surface context (route + DOM)
+
             _phase2_pages = state.get("pages") or pages or []
             if exploit_suggestions and _phase2_pages:
                 try:
@@ -5118,11 +5120,11 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     st.session_state["last_audit_discovery"] = discovery
     st.session_state["last_report_bytes"] = None
 
-    # ── Adaptive Learning Integration ─────────────────────────────────
+
     try:
         orchestrator = AdaptiveOrchestrator()
 
-        # Extract frameworks and WAF types from discovery results
+
         detected_frameworks = []
         detected_waf = []
         for result in all_results:
@@ -5147,7 +5149,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                 if "modsecurity" in framework_info.lower():
                     detected_waf.append("modsecurity")
 
-        # Record learnings from this audit
+
         orchestrator.continuous_learning_from_audit(
             audit_results={
                 "detected_frameworks": list(set(detected_frameworks)),
@@ -5166,7 +5168,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             target_url=target_url,
         )
 
-        # Display adaptation metrics
+
         adaptation_summary = orchestrator.get_adaptation_summary()
         with st.expander("📊 Métricas de Aprendizaje Adaptativo", expanded=False):
             col_fw, col_att, col_bypass, col_env = st.columns(4)

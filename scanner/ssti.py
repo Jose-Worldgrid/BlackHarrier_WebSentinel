@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para ssti.
+
 """
 Server-Side Template Injection (SSTI) scanner.
 Tests form fields and GET parameters for template evaluation.
@@ -12,26 +14,26 @@ from scanner.forms import extract_forms_from_html
 logger = logging.getLogger(__name__)
 
 
-# Each entry: (payload, expected_result_string, engine_hint)
+
 SSTI_PROBES = [
-    # Jinja2 / Twig / Flask
+
     ("{{7*7}}",           "49",  "Jinja2/Twig"),
     ("{{7*'7'}}",         "7777777", "Jinja2"),
     ("{%25 7*7 %25}",     "49",  "Jinja2 (URL-encoded)"),
-    # Freemarker / Spring
+
     ("${7*7}",            "49",  "Freemarker/Spring EL"),
     ("#{7*7}",            "49",  "Spring EL"),
-    # Ruby ERB / Slim
+
     ("<%= 7*7 %>",        "49",  "Ruby ERB"),
-    # Smarty
+
     ("{7*7}",             "49",  "Smarty"),
-    # Pebble / Velocity
+
     ("${{7*7}}",          "49",  "Pebble/Velocity"),
-    # Mako
+
     ("${7*7}",            "49",  "Mako"),
-    # Handlebars
+
     ("{{#with \"s\" as |string|}}{{string.constructor \"return 7*7\"}}{{/with}}", "49", "Handlebars"),
-    # Tornado / Python exec hint
+
     ("{% print(7*7) %}",  "49",  "Tornado"),
 ]
 
@@ -89,7 +91,7 @@ def _probe_forms(client, forms, results):
                             "soluciones sin eval dinámico de plantillas."
                         ),
                     })
-                    return  # one finding per form is enough
+                    return
             except Exception:
                 logger.debug("Fallo en prueba SSTI de formulario", exc_info=True)
 

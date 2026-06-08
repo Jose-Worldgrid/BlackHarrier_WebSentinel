@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para network recon.
+
 from urllib.parse import urlparse
 import socket
 import time
@@ -57,7 +59,7 @@ def scan_network_recon(url: str):
             "recommendation": "Introducir una URL válida con dominio o IP.",
         }]
 
-    # Skip resolution for bare IPs — already resolved
+
     is_ip = bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host))
 
     if is_ip:
@@ -90,7 +92,7 @@ def scan_network_recon(url: str):
             evidence_parts.append(f"IPv6: {', '.join(ipv6[:4])}")
         evidence_parts.append(f"Reverse DNS: {reverse_dns}")
 
-        # CDN / hosting fingerprint
+
         cdn_hints = {"cloudflare", "akamai", "fastly", "amazon", "azure", "google", "cdn"}
         cdn_found = any(h in reverse_dns.lower() for h in cdn_hints)
         if cdn_found:
@@ -108,7 +110,7 @@ def scan_network_recon(url: str):
             ),
         })
 
-    # HTTP banner enumeration
+
     client = HttpClient()
     try:
         response = client.get(url)
@@ -163,4 +165,3 @@ def scan_network_recon(url: str):
         })
 
     return results
-

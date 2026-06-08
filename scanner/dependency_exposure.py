@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para dependency exposure.
+
 from urllib.parse import urljoin, urlparse
 from scanner.http_client import HttpClient
 

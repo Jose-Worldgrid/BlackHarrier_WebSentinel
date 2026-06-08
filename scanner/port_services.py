@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para port services.
+
 import socket
 import ssl
 import time
@@ -20,7 +22,7 @@ DEEP_PORTS = EXTENDED_PORTS + [
     3128, 33060, 5985, 5986, 7001, 7002, 7777, 9201,
 ]
 
-# Severity levels for exposed services
+
 CRITICAL_PORTS = {
     23: "Telnet — protocolo sin cifrado, credenciales en claro.",
     3389: "RDP — acceso remoto de escritorio expuesto públicamente. Alto riesgo de fuerza bruta.",
@@ -175,7 +177,7 @@ def scan_port_services(url: str, profile: str = "common"):
         if banner:
             banners[port] = banner
 
-        # Protocol-aware probes for extra intelligence
+
         if port in (80, 8080, 8000, 8008, 8081, 8888, 9090, 10000):
             hint = _http_probe(host, port)
             if hint:
@@ -201,7 +203,7 @@ def scan_port_services(url: str, profile: str = "common"):
             "recommendation": "Complementar con inventario de red autorizado.",
         }]
 
-    # Build banner evidence string
+
     banner_str = " ; ".join(f"{p}:{b}" for p, b in list(banners.items())[:6])
     signal_str = " ; ".join(protocol_signals[:5])
 
@@ -225,7 +227,7 @@ def scan_port_services(url: str, profile: str = "common"):
         ),
     }]
 
-    # Report each critical/high/medium risky port individually for granularity
+
     critical_found = [p for p in open_ports if p in CRITICAL_PORTS]
     high_found = [p for p in open_ports if p in HIGH_PORTS and p not in CRITICAL_PORTS]
     medium_found = [p for p in open_ports if p in MEDIUM_PORTS]

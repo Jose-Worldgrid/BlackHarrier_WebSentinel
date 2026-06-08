@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para agent.
+
 import re
 from urllib.parse import urlparse
 
@@ -146,7 +148,7 @@ def build_recommended_attacks(memory, page_type, framework):
     scored = []
     for index, attack in enumerate(base):
         score = _module_success_rate(memory, attack)
-        # Preserve deterministic order as soft tie-breaker.
+
         score += max(0, 0.05 - (index * 0.002))
         scored.append((attack, score))
 

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para web paths.
+
 COMMON_WEB_PATHS = [
     "/login", "/signin", "/sign-in", "/auth", "/auth/login",
     "/user/login", "/users/login", "/account/login", "/admin/login",

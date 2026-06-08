@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para nessus client.
+
 import json
 import time
 from dataclasses import dataclass
@@ -17,7 +19,7 @@ SEV_MAP = {
 
 @dataclass
 class NessusConfig:
-    mode: str = "nessus-local"  # nessus-local | tenable-io | tenable-vm
+    mode: str = "nessus-local"
     base_url: str = "https://localhost:8834"
     access_key: str = ""
     secret_key: str = ""
@@ -50,7 +52,7 @@ class NessusClient:
         return {}
 
     def ping(self) -> dict:
-        # Works for Nessus local and tenable variants with status endpoint.
+
         return self._request("GET", "/server/status")
 
     def list_templates(self) -> list[dict]:
@@ -267,7 +269,7 @@ def run_nessus_assessment(
             "recommendation": "Verificar estado de motor Nessus y límite de escaneos concurrentes.",
         }], {"scan_id": scan_id, "vulnerabilities": []})
 
-    # Poll without hard-blocking forever (bounded polling window)
+
     started = time.time()
     last_progress = ""
 

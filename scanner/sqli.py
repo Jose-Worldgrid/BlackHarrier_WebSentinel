@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para sqli.
+
 import time
 import logging
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -172,7 +174,7 @@ def analyze_boolean_difference(true_response, false_response):
     status_diff = true_response.status_code != false_response.status_code
     url_diff = true_response.url != false_response.url
 
-    # Be conservative: a mere success marker is not enough unless the response also changes structurally.
+
     if true_success and false_failure:
         if url_diff or status_diff or (length_diff >= 200 and ratio < 0.90):
             return True, "Indicadores de acceso exitoso frente a respuesta fallida con cambio estructural relevante."
@@ -212,12 +214,12 @@ def test_time_based(client, form, time_payload_entry, time_threshold=3.5):
     import statistics
 
     payload_true = time_payload_entry["true"]
-    payload_false = time_payload_entry["false"]   # benign, near-zero sleep
+    payload_false = time_payload_entry["false"]
     db = time_payload_entry["db"]
 
-    BASELINE_SAMPLES = 3  # number of benign measurements
+    BASELINE_SAMPLES = 3
 
-    # --- Baseline phase ---
+
     baseline_times: list[float] = []
     for _ in range(BASELINE_SAMPLES):
         try:
@@ -235,11 +237,11 @@ def test_time_based(client, form, time_payload_entry, time_threshold=3.5):
     baseline_mean = statistics.mean(baseline_times)
     baseline_stdev = statistics.stdev(baseline_times) if len(baseline_times) > 1 else 0.5
 
-    # Dynamic threshold: at least time_threshold seconds, but also at least
-    # mean + 3 × stdev above baseline (reduces false positives on slow servers)
+
+
     dynamic_threshold = max(time_threshold, baseline_mean + 3 * baseline_stdev)
 
-    # --- Timed payload phase ---
+
     try:
         t0 = time.monotonic()
         r_true = submit_form(client, form, payload_true)
@@ -328,7 +330,7 @@ def scan_sqli_pages(pages, max_payloads=None):
         if not page_url:
             continue
 
-        # Test GET URL parameters
+
         results.extend(scan_url_params_sqli(client, page, error_payloads))
 
         forms = extract_forms_from_html(page_url, page_html)
@@ -385,7 +387,7 @@ def scan_sqli_pages(pages, max_payloads=None):
                 except Exception:
                     logger.debug("Fallo en prueba SQLi boolean-based", exc_info=True)
 
-            # Time-based blind SQLi
+
             for tp in time_payloads:
                 vulnerable, db, delay = test_time_based(client, form, tp)
                 if vulnerable:
@@ -399,7 +401,7 @@ def scan_sqli_pages(pages, max_payloads=None):
                     })
                     break
 
-            # UNION-based SQLi
+
             cols, union_response = test_union_based(client, form)
             if cols > 0:
                 results.append({

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para cors.
+
 """
 CORS security scanner.
 
@@ -59,7 +61,7 @@ def _classify_cors(acao: str | None, acac: str | None, origin_sent: str) -> tupl
 def _probe_endpoint(client: HttpClient, url: str, target_url: str) -> list[dict]:
     """Run all CORS probes against a single URL. Returns list of result dicts."""
     results = []
-    findings: list[tuple[str, str, str, str]] = []  # (origin_sent, acao, acac, note)
+    findings: list[tuple[str, str, str, str]] = []
 
     probes = [
         ("arbitrary_origin",  "https://evil.example"),
@@ -76,7 +78,7 @@ def _probe_endpoint(client: HttpClient, url: str, target_url: str) -> list[dict]
             severity, status, description = _classify_cors(acao, acac, origin)
 
             if status == "Hallazgo":
-                # Vary: Origin absence on reflected CORS → caching attack
+
                 vary_warning = ""
                 if acao and acao != "*" and "origin" not in vary.lower():
                     vary_warning = " Además, 'Vary: Origin' ausente — riesgo de CORS cache poisoning."
@@ -100,7 +102,7 @@ def _probe_endpoint(client: HttpClient, url: str, target_url: str) -> list[dict]
         except Exception:
             pass
 
-    # OPTIONS preflight check
+
     try:
         resp = client.options(
             url,
@@ -148,7 +150,7 @@ def scan_cors(url: str, pages: list | None = None) -> list[dict]:
     client = HttpClient()
     results = []
 
-    # Build set of unique endpoints to test
+
     endpoints: list[str] = [url]
     for page in pages or []:
         page_url = page.get("final_url") or page.get("url") or ""
@@ -156,7 +158,7 @@ def scan_cors(url: str, pages: list | None = None) -> list[dict]:
         if cls in ("api_candidate", "sensitive_candidate", "protected", "admin_candidate"):
             if page_url and page_url not in endpoints:
                 endpoints.append(page_url)
-        # Cap to avoid excessive traffic
+
         if len(endpoints) >= 10:
             break
 
@@ -164,7 +166,7 @@ def scan_cors(url: str, pages: list | None = None) -> list[dict]:
     for endpoint in endpoints:
         endpoint_results = _probe_endpoint(client, endpoint, url)
         for r in endpoint_results:
-            # Deduplicate by (origin, acao) pair
+
             key = r.get("evidence", "")[:80]
             if key not in tested_origins:
                 tested_origins.add(key)

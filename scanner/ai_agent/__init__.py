@@ -1,3 +1,5 @@
+# Modulo de inicializacion del paquete scanner.ai_agent.
+
 from scanner.ai_agent.agent import enrich_pages_with_ai_context
 from scanner.ai_agent.memory import record_audit_feedback
 from scanner.ai_agent.executor import ExecutionLog, PayloadVariant, AdaptiveExecutor

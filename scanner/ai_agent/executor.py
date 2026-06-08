@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para executor.
+
 """
 Adaptive Offensive Execution Engine
 Logs exhaustively every test execution for post-analysis and learning.
@@ -37,7 +39,7 @@ class ExecutionLog:
         response_body: str,
         response_headers: Dict,
         elapsed_ms: float,
-        result: str,  # "success", "partial", "failure", "blocked"
+        result: str,
         reason: str = "",
         detected_tech: Optional[List[str]] = None,
         waf_indicators: Optional[List[str]] = None,
@@ -55,7 +57,7 @@ class ExecutionLog:
             "request_context": self.context,
             "http_status": status_code,
             "response_headers": response_headers,
-            "response_body_sample": response_body[:2000],  # First 2KB
+            "response_body_sample": response_body[:2000],
             "response_length": len(response_body),
             "elapsed_ms": elapsed_ms,
             "result": result,
@@ -71,9 +73,9 @@ class PayloadVariant:
     def __init__(
         self,
         base_payload: str,
-        encoding: str = "none",  # none, url, html, js, base64, hex, unicode
-        obfuscation: str = "none",  # none, comment, split, nested, random_case
-        context: str = "attribute",  # attribute, script, html_body, js_string, etc.
+        encoding: str = "none",
+        obfuscation: str = "none",
+        context: str = "attribute",
     ):
         self.base_payload = base_payload
         self.encoding = encoding
@@ -84,21 +86,21 @@ class PayloadVariant:
         """Generate actual payload from template."""
         payload = self.base_payload
 
-        # Apply obfuscation
+
         if self.obfuscation == "comment":
-            # Insert comments to bypass simple filters
+
             payload = payload.replace(
                 "alert", "al/**/ert"
-            )  # XSS example
+            )
         elif self.obfuscation == "nested":
-            # Nested encoding
+
             payload = f"eval(atob('{self._to_base64(payload)}'))"
         elif self.obfuscation == "split":
-            # Split payload across multiple elements
+
             parts = [payload[i : i + 3] for i in range(0, len(payload), 3)]
             payload = '"+'.join([f"'{p}'" for p in parts]) + '+"'
 
-        # Apply encoding
+
         if self.encoding == "url":
             payload = "".join([f"%{ord(c):02x}" for c in payload])
         elif self.encoding == "html":
@@ -133,7 +135,7 @@ class AdaptiveExecutor:
         attack_name: str,
         target_url: str,
         payload: str,
-        executor_fn,  # Callable that runs actual attack
+        executor_fn,
         method: str = "GET",
         headers: Optional[Dict] = None,
         context: Optional[Dict] = None,
@@ -151,7 +153,7 @@ class AdaptiveExecutor:
             )
             elapsed_ms = elapsed_ms or (time.time() - start) * 1000
 
-            # Heuristic analysis
+
             result, reason = self._analyze_result(
                 status, body, resp_headers, payload
             )
@@ -193,12 +195,12 @@ class AdaptiveExecutor:
         """Heuristic analysis of why test succeeded/failed."""
         body_lower = body.lower()
 
-        # Success indicators
+
         if "alert(" in payload and ("alert(" in body or "xss" in body_lower):
             return "success", "Payload reflection or XSS execution detected"
 
         if status == 200 and len(body) > 100:
-            # Check for error patterns
+
             if any(
                 x in body_lower
                 for x in [
@@ -213,11 +215,11 @@ class AdaptiveExecutor:
             if any(x in body_lower for x in ["template", "jinja", "expression"]):
                 return "success", "Template Injection indicators"
 
-        # Partial success
+
         if status == 429:
             return "partial", "Rate limiting detected during payload execution"
 
-        # Blocked/Failed
+
         if status == 403:
             return "blocked", "Access denied - WAF/Authorization block"
         if status == 400:
@@ -225,7 +227,7 @@ class AdaptiveExecutor:
         if status in [404, 500]:
             return "failure", f"HTTP {status} - Server/resource error"
 
-        # Check for WAF strings
+
         if any(
             x in body_lower
             for x in ["blocked", "forbidden", "attack", "malicious", "detected"]

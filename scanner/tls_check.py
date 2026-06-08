@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para tls check.
+
 import ssl
 import socket
 from urllib.parse import urlparse

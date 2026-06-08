@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para sensitive files.
+
 from urllib.parse import urljoin, urlparse
 from scanner.http_client import HttpClient
 import uuid
@@ -5,46 +7,46 @@ import re
 
 
 SENSITIVE_PATHS = [
-    # Secrets & config
+
     ".env", ".env.local", ".env.prod", ".env.production", ".env.backup",
     ".env.example", ".env.development",
     "config.php", "config.js", "config.json", "config.yaml", "config.yml",
     "settings.py", "settings.php", "application.properties", "application.yml",
     "secrets.json", "credentials.json", "appsettings.json",
-    # VCS
+
     ".git/config", ".git/HEAD", ".git/COMMIT_EDITMSG",
     ".svn/entries", ".hg/hgrc",
-    # Backups
+
     "backup.zip", "backup.sql", "backup.tar.gz", "backup.tgz",
     "db.sql", "database.sql", "dump.sql", "data.sql",
     "site.zip", "www.zip", "archive.zip", "old.zip",
     "backup.bak", "index.php.bak", "config.php.bak",
-    # Debug & admin
+
     "phpinfo.php", "info.php", "test.php", "debug.php",
     "server-status", "server-info",
     "console", "admin/console", "rails/info/properties",
     "wp-config.php", "wp-config.php.bak", "wp-login.php",
-    # Spring Boot / Java
+
     "actuator", "actuator/env", "actuator/health", "actuator/beans",
     "actuator/mappings", "actuator/httptrace", "actuator/logfile",
     "actuator/heapdump", "actuator/threaddump", "actuator/conditions",
-    # API docs
+
     "swagger-ui.html", "swagger/index.html", "swagger-ui/index.html",
     "v3/api-docs", "api-docs", "openapi.json", "openapi.yaml",
     "api/swagger.json", "api/v1/swagger.json",
-    # Public recon
+
     "robots.txt", "sitemap.xml", "sitemap_index.xml",
     "security.txt", ".well-known/security.txt",
     "humans.txt", "crossdomain.xml", "clientaccesspolicy.xml",
-    # Logs
+
     "logs/access.log", "logs/error.log", "log/app.log",
     "error_log", "access_log",
-    # Cloud
+
     ".aws/credentials", ".aws/config",
     "docker-compose.yml", "docker-compose.yaml",
     "Dockerfile", ".dockerignore",
     "Procfile", "app.yaml", "app.json",
-    # Misc
+
     "package.json", "package-lock.json", "yarn.lock",
     "composer.json", "composer.lock",
     "Gemfile", "Gemfile.lock",

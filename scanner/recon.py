@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para recon.
+
 from bs4 import BeautifulSoup
 from scanner.http_client import HttpClient
 

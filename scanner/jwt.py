@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para jwt.
+
 """
 JWT security scanner.
 
@@ -19,9 +21,9 @@ import time as _time
 from scanner.http_client import HttpClient
 
 
-# ---------------------------------------------------------------------------
-# Common weak secrets tried in brute-force phase
-# ---------------------------------------------------------------------------
+
+
+
 _WEAK_SECRETS = [
     "", "secret", "password", "123456", "changeme", "supersecret",
     "jwt_secret", "your-256-bit-secret", "your-secret", "admin",
@@ -101,14 +103,14 @@ def _check_kid_injection(header: dict) -> list[str]:
     if not kid:
         return []
     issues = []
-    # Path traversal via kid
+
     if any(seq in kid for seq in ("../", "..\\", "/etc/", "/proc/")):
         issues.append(
             f"kid header contiene path traversal: '{kid}'. "
             "Si el servidor usa kid como ruta para cargar la clave, "
             "puede leer archivos arbitrarios o usar /dev/null como clave vacía."
         )
-    # SQL injection via kid
+
     sqli_chars = ("'", '"', "--", ";", " OR ", " AND ")
     if any(ch in kid for ch in sqli_chars):
         issues.append(
@@ -121,8 +123,8 @@ def _check_kid_injection(header: dict) -> list[str]:
 def _check_weak_secret(header_b64: str, payload_b64: str) -> str | None:
     """Try common secrets against HS256. Returns secret if found."""
     signing_input = f"{header_b64}.{payload_b64}".encode()
-    # We don't have the original signature here, but we flag the attempt
-    # The proper check requires the full token; handled in scan_jwt_from_pages
+
+
     return None
 
 
@@ -157,7 +159,7 @@ def _verify_hs256(token: str, secret: str) -> bool:
 def scan_jwt_from_pages(pages):
     results = []
     client = HttpClient()
-    all_tokens: list[tuple[str, str]] = []  # (source_url, token)
+    all_tokens: list[tuple[str, str]] = []
 
     for page in pages:
         html = page.get("html") or page.get("rendered_html") or ""
@@ -165,10 +167,10 @@ def scan_jwt_from_pages(pages):
         if not html and not page_url:
             continue
 
-        # Discover tokens in HTML
+
         all_tokens.extend(_extract_tokens_from_html(html, page_url))
 
-        # Fetch the page to check cookies
+
         if page_url:
             try:
                 resp = client.get(page_url)
@@ -176,7 +178,7 @@ def scan_jwt_from_pages(pages):
             except Exception:
                 pass
 
-    # Deduplicate by token value
+
     seen: set[str] = set()
     unique_tokens: list[tuple[str, str]] = []
     for src, tok in all_tokens[:50]:
@@ -198,17 +200,17 @@ def scan_jwt_from_pages(pages):
         alg = str(header.get("alg", "")).upper()
         issues: list[str] = []
 
-        # 1. Algorithm: none
+
         if alg == "NONE":
             issues.append("Algoritmo 'none' — el token no tiene firma. Se puede falsificar trivialmente.")
 
-        # 2. Algorithm confusion (asymmetric → HS256)
+
         issues.extend(_check_algorithm_confusion(header, header_b64, payload_b64))
 
-        # 3. kid injection
+
         issues.extend(_check_kid_injection(header))
 
-        # 4. Missing claims
+
         now = int(_time.time())
         if "exp" not in payload:
             issues.append("Token sin claim 'exp' — no expira nunca.")
@@ -217,10 +219,10 @@ def scan_jwt_from_pages(pages):
         if "iat" not in payload:
             issues.append("Token sin claim 'iat' — imposible detectar tokens demasiado antiguos.")
 
-        # 5. Sensitive data in payload
+
         issues.extend(_check_sensitive_claims(payload))
 
-        # 6. Weak secret brute force (HS256 only)
+
         if alg == "HS256":
             for secret in _WEAK_SECRETS:
                 if _verify_hs256(token, secret):
@@ -231,7 +233,7 @@ def scan_jwt_from_pages(pages):
                     break
 
         if issues:
-            # Determine highest severity
+
             severity = "Alta"
             if any("falsificar" in i or "débil" in i or "Confusion" in i for i in issues):
                 severity = "Crítica"

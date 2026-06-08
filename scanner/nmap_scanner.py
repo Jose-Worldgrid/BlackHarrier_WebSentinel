@@ -1,3 +1,5 @@
+# Modulo de ejecucion y normalizacion de reconocimiento de red basado en Nmap.
+
 import ctypes
 import json
 import re
@@ -13,14 +15,14 @@ from pathlib import Path
 
 
 NMAP_PROFILES = {
-    # SAFE: version detection only, no ping, works without admin privileges
+
     "SAFE": ["-sV", "-Pn", "-T4", "--open", "--reason", "--version-light"],
-    # DEEP: service + default scripts, T4 speed. -O requires raw sockets (admin
-    # on Windows); injected at runtime only when the process is elevated.
+
+
     "DEEP": ["-sV", "-sC", "-Pn", "-T4", "--open", "--reason", "--version-all"],
-    # AGGRESSIVE: broad offensive recon with curated NSE scripts.
+
     "AGGRESSIVE": ["-sV", "-sC", "-Pn", "-T4", "--open", "--reason", "--version-all"],
-    # KALI_FULL: deep host/service/app/db/user enumeration inspired by common Kali playbooks.
+
     "KALI_FULL": ["-sV", "-sC", "-Pn", "-T4", "--open", "--reason", "--version-all", "--script-timeout", "20s"],
 }
 
@@ -148,8 +150,8 @@ def _find_nmap_binary(preferred_path: str | None = None) -> str:
         if found:
             return found
 
-    # shutil.which misses Nmap when PATH wasn't refreshed after install –
-    # fall back to known Windows install locations.
+
+
     for fallback in _NMAP_FALLBACK_PATHS:
         if Path(fallback).exists():
             return fallback
@@ -162,8 +164,8 @@ def _emit(progress_callback, **kwargs):
         try:
             progress_callback(kwargs)
         except Exception:
-            # Streamlit UI callbacks may run from non-main threads during process readers.
-            # Never abort scan execution because of progress rendering errors.
+
+
             return
 
 
@@ -318,54 +320,54 @@ def _parse_nmap_xml(xml_path: str, progress_callback=None) -> dict:
 
 
 def _severity_for_port(port: int) -> str:
-    # ── Critical: direct full-system or unauthenticated access risk ─────
+
     _CRITICAL = {
-        2375, 2376,         # Docker daemon (unauthenticated API)
-        5000,               # Docker Registry (unauthenticated push/pull)
-        9000, 9001,         # Portainer / SonarQube / Jenkins
-        3389,               # RDP
-        5900, 5901,         # VNC
-        6379,               # Redis (unauthenticated)
-        9200, 9300,         # Elasticsearch
-        27017, 27018,       # MongoDB
-        5985, 5986,         # WinRM
-        2181,               # ZooKeeper
-        7001, 7002,         # WebLogic
-        1521,               # Oracle DB
-        523,                # IBM DB2
+        2375, 2376,
+        5000,
+        9000, 9001,
+        3389,
+        5900, 5901,
+        6379,
+        9200, 9300,
+        27017, 27018,
+        5985, 5986,
+        2181,
+        7001, 7002,
+        1521,
+        523,
     }
-    # ── High: sensitive/management services ─────────────────────────────
+
     _HIGH = {
-        21,                 # FTP (plaintext)
-        23,                 # Telnet
-        25,                 # SMTP (relay risk)
-        110, 143,           # POP3 / IMAP (plaintext)
-        139, 445,           # SMB
-        1433,               # MSSQL
-        3306,               # MySQL/MariaDB
-        5432,               # PostgreSQL
-        8080, 8443,         # Common admin/dev HTTP
-        8000, 8001,         # Dev servers (Uvicorn/Gunicorn)
-        8888,               # Jupyter Notebook
-        9100, 9101,         # Prometheus node-exporter / JetDirect print
-        9003,               # Often API/debug port
-        1883, 8883,         # MQTT (IoT broker)
-        3000,               # Node.js / Grafana / Gitea
-        4848,               # GlassFish admin
-        4444,               # Metasploit default listener
+        21,
+        23,
+        25,
+        110, 143,
+        139, 445,
+        1433,
+        3306,
+        5432,
+        8080, 8443,
+        8000, 8001,
+        8888,
+        9100, 9101,
+        9003,
+        1883, 8883,
+        3000,
+        4848,
+        4444,
     }
-    # ── Medium: infrastructure services needing review ──────────────────
+
     _MEDIUM = {
-        22,                 # SSH
-        53,                 # DNS
-        111, 135,           # RPC
-        389, 636,           # LDAP / LDAPS
-        587, 465,           # SMTP submission
-        993, 995,           # IMAP/POP3 SSL
-        5601,               # Kibana
-        15672,              # RabbitMQ management
-        2049,               # NFS
-        161, 162,           # SNMP
+        22,
+        53,
+        111, 135,
+        389, 636,
+        587, 465,
+        993, 995,
+        5601,
+        15672,
+        2049,
+        161, 162,
     }
     if port in _CRITICAL:
         return "Crítica"
@@ -622,14 +624,14 @@ def run_nmap_recon(
     if script_items:
         args.append(f"--script={','.join(script_items)}")
 
-    # -O (OS detection) and -sS (SYN stealth) require raw packet privileges.
-    # Inject -O only when elevated to avoid incomplete/degraded scans.
+
+
     elevated = _is_elevated()
     if profile_key in ("DEEP", "AGGRESSIVE") and elevated:
         if "-O" not in args:
             args.append("-O")
     elif profile_key == "AGGRESSIVE" and "-A" in args and not elevated:
-        # -A implicitly includes -O. Without admin replace with explicit safe flags.
+
         args = [a for a in args if a != "-A"]
         for flag in ("-sV", "-sC"):
             if flag not in args:
@@ -640,8 +642,8 @@ def run_nmap_recon(
 
     nmap_bin = _find_nmap_binary(nmap_path)
 
-    # Adaptive timeout: when scanning several hosts or deeper profiles, 420s may
-    # be too low and causes premature aborts with incomplete output.
+
+
     per_target_floor = 90
     if profile_key == "DEEP":
         per_target_floor = 150
@@ -681,7 +683,7 @@ def run_nmap_recon(
 
         if rc == 124:
             if Path(xml_path).exists():
-                # Nmap usually writes partial XML; salvage data instead of discarding it.
+
                 try:
                     scan_data = _parse_nmap_xml(xml_path, progress_callback=progress_callback)
                     rows = normalize_nmap_results(scan_data, profile=profile_key)

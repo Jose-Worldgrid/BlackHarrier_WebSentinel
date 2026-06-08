@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para ssrf.
+
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from scanner.http_client import HttpClient
 
@@ -9,36 +11,36 @@ SSRF_PARAM_HINTS = [
     "import", "export", "resource", "location"
 ]
 
-# Cloud metadata + internal probes ordered by likelihood
+
 SSRF_PROBE_TARGETS = [
-    # AWS IMDSv1
+
     "http://169.254.169.254/latest/meta-data/",
     "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
-    # GCP
+
     "http://metadata.google.internal/computeMetadata/v1/",
-    # Azure
+
     "http://169.254.169.254/metadata/instance?api-version=2021-02-01",
-    # Loopback
+
     "http://127.0.0.1/",
     "http://127.0.0.1:80/",
     "http://127.0.0.1:8080/",
     "http://127.0.0.1:8443/",
     "http://localhost/",
-    # Internal ranges
+
     "http://10.0.0.1/",
     "http://192.168.1.1/",
-    # External baseline (must NOT produce internal content)
+
     "https://example.org/",
 ]
 
 SSRF_INTERNAL_SIGNATURES = [
-    # AWS
+
     "ami-id", "instance-id", "security-credentials", "iam",
-    # GCP
+
     "computeMetadata", "serviceAccounts",
-    # Azure
+
     "azEnvironment", "resourceGroupName",
-    # Generic
+
     "127.0.0.1", "localhost", "internal",
 ]
 

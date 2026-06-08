@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para browser auth.
+
 import asyncio
 import json
 import logging
@@ -116,12 +118,12 @@ def is_auth_endpoint(url):
 
 def find_login_fields(page):
     """Locate email/user and password inputs on a rendered login page.
-    
+
     Tries multiple selector strategies in order of specificity, including
     aria-label, autocomplete attributes, and common name/id patterns.
     Falls back to the first visible text input adjacent to a password field.
     """
-    # --- Locate password field first (most specific signal) ---
+
     password_locator = page.locator(
         "input[type='password'], "
         "input[name*='pass' i], input[id*='pass' i], "
@@ -130,7 +132,7 @@ def find_login_fields(page):
     )
 
     if password_locator.count() == 0:
-        # Last resort: any visible input whose aria-label hints at password
+
         password_locator = page.locator(
             "[aria-label*='password' i], [aria-label*='contraseña' i], [aria-label*='clave' i]"
         )
@@ -139,7 +141,7 @@ def find_login_fields(page):
 
     password_input = password_locator.first
 
-    # --- Locate username / email field ---
+
     user_locator = page.locator(
         "input[type='email'], "
         "input[name*='email' i], input[id*='email' i], "
@@ -155,7 +157,7 @@ def find_login_fields(page):
     if user_locator.count() > 0:
         return user_locator.first, password_input
 
-    # Fallback: first visible input[type=text] on page
+
     text_inputs = page.locator("input[type='text']:visible")
     if text_inputs.count() > 0:
         return text_inputs.first, password_input
@@ -172,7 +174,7 @@ def click_login(page, password_input=None):
     3) named login-like buttons
     4) Enter key in password field / page
     """
-    # 1) Try submit inside the same form as password input
+
     if password_input is not None:
         try:
             form_locator = password_input.locator("xpath=ancestor::form[1]")
@@ -189,7 +191,7 @@ def click_login(page, password_input=None):
         except Exception:
             pass
 
-    # 2) Explicit submit inputs/buttons on page
+
     for sel in ("button[type='submit']:visible", "input[type='submit']:visible"):
         try:
             locator = page.locator(sel)
@@ -199,7 +201,7 @@ def click_login(page, password_input=None):
         except Exception:
             continue
 
-    # 3) Named button patterns in ES/EN
+
     button_patterns = [
         re.compile(r"iniciar sesión", re.I),
         re.compile(r"inicia sesión", re.I),
@@ -222,7 +224,7 @@ def click_login(page, password_input=None):
         except Exception:
             continue
 
-    # 4) Last visible button fallback
+
     for sel in ("button:visible",):
         try:
             locator = page.locator(sel)
@@ -232,7 +234,7 @@ def click_login(page, password_input=None):
         except Exception:
             continue
 
-    # 5) Press Enter on password field as last resort
+
     if password_input is not None:
         try:
             password_input.press("Enter", timeout=2000)
@@ -438,7 +440,7 @@ def analyze_direct_response(endpoint, payload, response, mode):
     success = has_marker(lower, SUCCESS_MARKERS)
     failure = has_marker(lower, FAILURE_MARKERS)
 
-    # Avoid false positives: success markers alone are not enough unless the response moved away from the endpoint.
+
     url_changed = response.url != endpoint
     possible_bypass = sql_error or (success and not failure and url_changed and response.status_code < 400)
 

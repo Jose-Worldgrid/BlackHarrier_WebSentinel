@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para prompts.
+
 SYSTEM_PROMPT = """
 Eres BlackHarrier AI Agent, un agente técnico de auditoría web ofensiva autorizada.
 

@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para sqli payloads.
+
 SQLI_AUTH_PAYLOADS = [
     "' OR '1'='1",
     "' OR '1'='1' --",

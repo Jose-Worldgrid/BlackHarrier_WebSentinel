@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para xss.
+
 from bs4 import BeautifulSoup
 import logging
 import re
@@ -10,10 +12,10 @@ from scanner.forms import extract_forms_from_html
 logger = logging.getLogger(__name__)
 
 
-# Marcador único de auditoría – suficientemente raro para evitar colisiones
+
 XSS_MARKER = "bh_xss_9r4k"
 
-# Atributos de evento HTML que pueden ejecutar JS
+
 _EVENT_ATTRS = re.compile(
     r'\b(on(?:load|error|click|mouse\w+|focus|blur|input|change|submit|key\w+|'
     r'drag\w*|drop|resize|scroll|unload|beforeunload|message|popstate|'
@@ -41,7 +43,7 @@ def _reflection_context(response_html: str, marker: str) -> str:
     lower_html = response_html.lower()
     lower_marker = marker.lower()
 
-    # Quick bail-out: if the raw marker is completely absent, check encoded form
+
     if lower_marker not in lower_html:
         encoded = _html_mod.escape(marker, quote=True).lower()
         if encoded in lower_html:
@@ -51,38 +53,38 @@ def _reflection_context(response_html: str, marker: str) -> str:
     try:
         soup = BeautifulSoup(response_html, "html.parser")
     except Exception:
-        # If we can't parse, treat any raw appearance as potentially dangerous
+
         return "text"
 
-    # 1. Check <script> blocks (highest risk)
+
     for script in soup.find_all("script"):
         src = script.get("src") or ""
         content = (script.string or "")
         if lower_marker in content.lower() or lower_marker in src.lower():
             return "script"
 
-    # 2. Check all attributes on all tags
+
     for tag in soup.find_all(True):
         for attr, val in (tag.attrs or {}).items():
             val_str = " ".join(val) if isinstance(val, list) else str(val or "")
             if lower_marker not in val_str.lower():
                 continue
-            # Event handler attribute
+
             if _EVENT_ATTRS.match(attr + "="):
                 return "event"
-            # href/action/src with javascript:
+
             if attr.lower() in ("href", "action", "src", "formaction", "data"):
                 if "javascript:" in val_str.lower():
                     return "href_js"
-            # Any other attribute – raw (unencoded) reflection
+
             return "attribute"
 
-    # 3. Visible text nodes
+
     body_text = soup.get_text()
     if lower_marker in body_text.lower():
         return "text"
 
-    # 4. Marker is present in the raw HTML but was HTML-entity encoded
+
     return "encoded"
 
 
@@ -94,7 +96,7 @@ def _severity_for_context(context: str) -> tuple[str, str]:
         return "Alta", "Posible hallazgo"
     if context == "text":
         return "Media", "Posible hallazgo"
-    # encoded or absent → not exploitable as-is
+
     return "Informativa", "No evidenciado"
 
 
@@ -102,37 +104,37 @@ def _is_exploitable_context(context: str) -> bool:
     return context in ("script", "event", "href_js", "attribute", "text")
 
 XSS_PAYLOADS = [
-    # Básicos con marcador auditable
+
     f'"><{XSS_MARKER}>',
     f"'><{XSS_MARKER}>",
     f"<{XSS_MARKER}>",
-    # Script clásico
+
     "<script>alert(1)</script>",
     "<SCRIPT>alert(1)</SCRIPT>",
-    # WAF bypass: case mixing y espacios alternativos
+
     "<ScRiPt>alert(1)</sCrIpT>",
     "<script/x>alert(1)</script>",
-    # SVG y eventos
+
     "<svg onload=alert(1)>",
     "<svg/onload=alert(1)>",
     "<img src=x onerror=alert(1)>",
     "<img src=x onerror=alert`1`>",
-    # Event handlers en atributos
+
     '" onmouseover="alert(1)',
     "' onfocus='alert(1)' autofocus='",
-    # href javascript
+
     "javascript:alert(1)",
-    # Doble codificación
+
     "%3Cscript%3Ealert(1)%3C/script%3E",
     "&#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;",
-    # Template literal
+
     "${alert(1)}",
     "{{constructor.constructor('alert(1)')()}}",
-    # Blind XSS: payload que tarda en reflejarse (stored)
+
     f'<img src=x onerror="/*{XSS_MARKER}_blind*/">',
 ]
 
-# Cabeceras que pueden reflejarse en la respuesta
+
 REFLECTIVE_HEADERS = [
     ("Referer",    f"<{XSS_MARKER}>"),
     ("X-Forwarded-For", f"<{XSS_MARKER}>"),
@@ -199,8 +201,8 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
 
                     resp_text = response.text or ""
 
-                    # Context-aware reflection check using the unique marker
-                    # For payloads containing the marker, check context directly
+
+
                     check_token = XSS_MARKER if XSS_MARKER in payload else payload
                     context = _reflection_context(resp_text, check_token)
 
@@ -225,7 +227,7 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
                         })
                         break
 
-                    # Blind/Stored hint: marker in response but form uses a different payload
+
                     if XSS_MARKER in resp_text and XSS_MARKER not in payload:
                         results.append({
                             "control": f"XSS potencialmente almacenado - formulario {form['index']}",
@@ -246,7 +248,7 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
                 except Exception as exc:
                     logger.debug("Error en prueba XSS formulario", exc_info=True)
 
-        # GET query-parameter reflection
+
         for payload in payloads:
             try:
                 response = test_query_params(client, page_url, payload)
@@ -276,7 +278,7 @@ def scan_reflected_xss_pages(pages, max_payloads=None):
             except Exception:
                 logger.debug("Fallo en prueba XSS GET", exc_info=True)
 
-        # HTTP Header injection XSS
+
         for header_name, header_payload in REFLECTIVE_HEADERS:
             try:
                 response = client.get(page_url, headers={header_name: header_payload})

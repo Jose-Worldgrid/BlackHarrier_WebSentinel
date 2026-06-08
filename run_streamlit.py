@@ -1,3 +1,5 @@
+# Modulo lanzador para iniciar Streamlit con parametros estables en este entorno.
+
 """Safe Streamlit launcher for Windows + Python 3.14 WMI issue.
 
 This monkeypatches platform.system() very early so Streamlit does not
@@ -10,8 +12,8 @@ import sys
 
 
 def _safe_platform_system():
-    # Force fast path: on some Python 3.14 + Windows setups, platform.system()
-    # can block in WMI queries during Streamlit import.
+
+
     return "Windows"
 
 
@@ -24,7 +26,7 @@ def _safe_win32_ver(*_args, **_kwargs):
 
 platform.win32_ver = _safe_win32_ver
 
-# Optional: make startup behavior deterministic for this workspace.
+
 os.environ.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
 os.environ.setdefault("STREAMLIT_SERVER_RUN_ON_SAVE", "false")
 
@@ -32,11 +34,11 @@ from streamlit.web.cli import main
 
 
 if __name__ == "__main__":
-    # Behave like: streamlit run app.py
+
     if len(sys.argv) == 1:
         sys.argv = ["streamlit", "run", "app.py"]
     elif len(sys.argv) >= 2 and sys.argv[1] != "run":
-        # Allow custom subcommands, e.g. --version, hello, etc.
+
         sys.argv = ["streamlit", *sys.argv[1:]]
     else:
         sys.argv = ["streamlit", *sys.argv[1:]]

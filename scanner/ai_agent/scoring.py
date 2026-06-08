@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para scoring.
+
 """
 Semantic Knowledge Base and Scoring System
 Persistent memory of attack effectiveness by environment, framework, and technique.
@@ -40,7 +42,7 @@ class KnowledgeBase:
         try:
             os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
             with open(self.storage_path, "w", encoding="utf-8") as f:
-                # Convert defaultdict to regular dict for JSON serialization
+
                 serializable = {}
                 for key, value in self.knowledge.items():
                     if isinstance(value, defaultdict):
@@ -82,7 +84,7 @@ class KnowledgeBase:
         attack_name: str,
         framework: str,
         payload: str,
-        result: str,  # success, partial, failure, blocked
+        result: str,
         time_ms: float,
         reason: str = "",
     ):
@@ -115,13 +117,13 @@ class KnowledgeBase:
         else:
             stats["failures"] += 1
 
-        # Update average time
+
         stats["avg_time_ms"] = (stats["avg_time_ms"] * (stats["attempts"] - 1) + time_ms) / stats["attempts"]
 
-        # Record payload
+
         stats["payloads_used"].append(
             {
-                "payload": payload[:100],  # First 100 chars
+                "payload": payload[:100],
                 "result": result,
                 "reason": reason,
                 "timestamp": datetime.now().isoformat(),
@@ -190,7 +192,7 @@ class KnowledgeBase:
 
         attacks = self.knowledge["attack_effectiveness"][framework]
 
-        # Calculate effectiveness score
+
         scored_attacks = []
         for attack_name, stats in attacks.items():
             if stats["attempts"] > 0:
@@ -279,15 +281,15 @@ class ScoringEngine:
         Score a payload's likelihood of success (0.0 - 1.0).
         Based on historical effectiveness and known defenses.
         """
-        score = 0.5  # Base score
+        score = 0.5
 
-        # Bonus for framework-specific payloads
+
         best_attacks = self.kb.get_best_attacks_for_framework(framework, limit=20)
         for attack_name, effectiveness in best_attacks:
             if attack_name.lower() in attack_type.lower():
                 score += effectiveness * 0.3
 
-        # Penalty for known WAF types
+
         for waf in waf_types:
             bypass_techniques = self.kb.get_bypass_techniques_for_filter(waf, limit=10)
             if bypass_techniques:

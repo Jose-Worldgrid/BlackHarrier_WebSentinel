@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para forms.
+
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
@@ -464,7 +466,7 @@ def scan_forms_from_pages(pages):
         browser_runtime = page.get("browser_runtime") or {}
         runtime_inputs = browser_runtime.get("inputs") or []
 
-        # Detectar login dinámico desde runtime REAL
+
         if runtime_inputs:
             has_password = any("password" in str(f).lower() for f in runtime_inputs)
             has_user = any("email" in str(f).lower() or "user" in str(f).lower() for f in runtime_inputs)

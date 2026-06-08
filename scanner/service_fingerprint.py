@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para service fingerprint.
+
 """
 Service Fingerprinting Module
 Detects running services and their versions via banner grabbing and protocol analysis
@@ -11,11 +13,11 @@ from typing import Dict, List, Optional, Tuple
 
 class ServiceFingerprinter:
     """
-    Identifies services running on open ports through banner grabbing 
+    Identifies services running on open ports through banner grabbing
     and protocol-specific queries.
     """
-    
-    # Common port -> expected service mappings
+
+
     PORT_HINTS = {
         21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
         80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS", 445: "SMB",
@@ -24,35 +26,35 @@ class ServiceFingerprinter:
         9200: "Elasticsearch", 9300: "Elasticsearch", 5601: "Kibana",
         3000: "Node.js/Rails", 5000: "Python/Flask", 8000: "Django",
     }
-    
-    # Protocol-specific commands to trigger service banners
+
+
     SERVICE_PROBES = {
-        "SSH": (b"", b"SSH-"),  # SSH announces immediately
+        "SSH": (b"", b"SSH-"),
         "FTP": (b"\r\n", b"220"),
         "SMTP": (b"\r\n", b"220"),
         "IMAP": (b"\r\n", b"* OK"),
         "POP3": (b"\r\n", b"+OK"),
         "HTTP": (b"GET / HTTP/1.0\r\nConnection: close\r\n\r\n", b"HTTP/"),
-        "HTTPS": (None, None),  # SSL/TLS handled separately
+        "HTTPS": (None, None),
         "TELNET": (b"\r\n", b"login:|telnet|Username|Password"),
         "MYSQL": (b"", b"MySQL"),
         "PostgreSQL": (b"", b"PostgreSQL"),
         "MongoDB": (b"", None),
         "Redis": (b"COMMAND\r\n", b"redis"),
     }
-    
+
     def __init__(self, timeout: float = 3.0):
         """Initialize fingerprinter with connection timeout."""
         self.timeout = timeout
-    
+
     def fingerprint_port(self, host: str, port: int) -> Dict:
         """
         Attempt to identify the service running on a port.
-        
+
         Args:
             host: Target hostname/IP
             port: Port number
-            
+
         Returns:
             Dict with service info: name, version, banner, certainty
         """
@@ -62,41 +64,41 @@ class ServiceFingerprinter:
             "version": None,
             "banner": None,
             "method": None,
-            "certainty": "low",  # low, medium, high
+            "certainty": "low",
             "protocol": "tcp"
         }
-        
-        # First try: port hint
+
+
         if port in self.PORT_HINTS:
             result["service"] = self.PORT_HINTS[port]
             result["certainty"] = "low"
             result["method"] = "port_mapping"
-        
-        # Try banner grabbing
+
+
         banner_result = self._grab_banner(host, port)
         if banner_result:
             result.update(banner_result)
             return result
-        
-        # Try protocol-specific probes
+
+
         probe_result = self._probe_service(host, port)
         if probe_result:
             result.update(probe_result)
             return result
-        
-        # Try SSL/TLS detection
+
+
         if port in [443, 8443, 9443, 465, 989, 992, 995]:
             ssl_result = self._detect_ssl_service(host, port)
             if ssl_result:
                 result.update(ssl_result)
                 return result
-        
+
         return result
-    
+
     def _grab_banner(self, host: str, port: int) -> Optional[Dict]:
         """
         Grab service banner by connecting and reading response.
-        
+
         Returns: Dict with service/version/banner info, or None
         """
         try:
@@ -104,14 +106,14 @@ class ServiceFingerprinter:
                 ip = socket.gethostbyname(host)
             except socket.gaierror:
                 return None
-            
+
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             sock.connect((ip, port))
-            
-            # Read initial banner (many services send without prompt)
+
+
             banner = sock.recv(1024).decode(errors='ignore')
-            
+
             if banner:
                 sock.close()
                 service_info = self._parse_banner(banner, port)
@@ -119,7 +121,7 @@ class ServiceFingerprinter:
                     service_info["banner"] = banner[:200]
                     service_info["method"] = "banner_grabbing"
                     return service_info
-        
+
         except (socket.timeout, ConnectionRefusedError, OSError):
             pass
         finally:
@@ -127,35 +129,35 @@ class ServiceFingerprinter:
                 sock.close()
             except:
                 pass
-        
+
         return None
-    
+
     def _probe_service(self, host: str, port: int) -> Optional[Dict]:
         """
         Send protocol-specific probes to detect service.
-        
+
         Returns: Service info dict or None
         """
         for service_name, (probe, response_marker) in self.SERVICE_PROBES.items():
             if probe is None or response_marker is None:
                 continue
-            
+
             try:
                 try:
                     ip = socket.gethostbyname(host)
                 except socket.gaierror:
                     continue
-                
+
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(self.timeout)
                 sock.connect((ip, port))
-                
+
                 if probe:
                     sock.sendall(probe)
-                
+
                 response = sock.recv(1024).decode(errors='ignore')
                 sock.close()
-                
+
                 if isinstance(response_marker, str):
                     if re.search(response_marker, response, re.IGNORECASE):
                         service_info = self._parse_banner(response, port)
@@ -171,16 +173,16 @@ class ServiceFingerprinter:
                             "certainty": "high",
                             "method": "protocol_probe"
                         }
-            
+
             except (socket.timeout, ConnectionRefusedError, OSError):
                 continue
-        
+
         return None
-    
+
     def _detect_ssl_service(self, host: str, port: int) -> Optional[Dict]:
         """
         Detect SSL/TLS-wrapped services.
-        
+
         Returns: SSL service info
         """
         try:
@@ -188,17 +190,17 @@ class ServiceFingerprinter:
                 ip = socket.gethostbyname(host)
             except socket.gaierror:
                 return None
-            
+
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-            
+
             with socket.create_connection((ip, port), timeout=self.timeout) as sock:
                 with context.wrap_socket(sock, server_hostname=host) as ssock:
-                    # Get certificate info
+
                     cert = ssock.getpeercert()
                     cipher = ssock.cipher()
-                    
+
                     result = {
                         "service": "HTTPS",
                         "version": ssock.version(),
@@ -207,29 +209,29 @@ class ServiceFingerprinter:
                         "method": "ssl_detection",
                         "ssl_version": ssock.version()
                     }
-                    
-                    # Try to get service banner over SSL
+
+
                     try:
                         ssock.sendall(b"GET / HTTP/1.0\r\n\r\n")
                         banner = ssock.recv(1024).decode(errors='ignore')
                         result["banner"] = banner[:200]
                     except:
                         pass
-                    
+
                     return result
-        
+
         except (socket.timeout, ssl.SSLError, ConnectionRefusedError, OSError):
             return None
-    
+
     def _parse_banner(self, banner: str, port: int) -> Dict:
         """
         Extract service and version from banner text.
-        
+
         Returns: Dict with service/version/certainty
         """
         banner_lower = banner.lower()
-        
-        # SSH detection
+
+
         if banner_lower.startswith("ssh-"):
             match = re.search(r"SSH-2\.0-([^\r\n]+)", banner)
             version = match.group(1) if match else None
@@ -238,8 +240,8 @@ class ServiceFingerprinter:
                 "version": version,
                 "certainty": "high"
             }
-        
-        # HTTP detection
+
+
         if "http/" in banner_lower:
             match = re.search(r"Server:\s*([^\r\n]+)", banner, re.IGNORECASE)
             server = match.group(1).strip() if match else None
@@ -248,8 +250,8 @@ class ServiceFingerprinter:
                 "version": server,
                 "certainty": "high"
             }
-        
-        # FTP detection
+
+
         if banner_lower.startswith("220"):
             match = re.search(r"220[^(]*\(?(.*?)\)?", banner, re.IGNORECASE)
             version = match.group(1) if match else None
@@ -258,8 +260,8 @@ class ServiceFingerprinter:
                 "version": version,
                 "certainty": "high"
             }
-        
-        # MySQL detection
+
+
         if "mysql" in banner_lower:
             match = re.search(r"5\.\d+\.\d+", banner)
             version = match.group(0) if match else None
@@ -268,8 +270,8 @@ class ServiceFingerprinter:
                 "version": version,
                 "certainty": "high"
             }
-        
-        # PostgreSQL detection
+
+
         if "postgresql" in banner_lower:
             match = re.search(r"(\d+\.\d+)", banner)
             version = match.group(1) if match else None
@@ -278,15 +280,15 @@ class ServiceFingerprinter:
                 "version": version,
                 "certainty": "high"
             }
-        
-        # Generic: return port hint
+
+
         if port in self.PORT_HINTS:
             return {
                 "service": self.PORT_HINTS[port],
                 "version": None,
                 "certainty": "medium"
             }
-        
+
         return {
             "service": None,
             "version": None,
@@ -297,12 +299,12 @@ class ServiceFingerprinter:
 def fingerprint_services(host: str, ports: List[int], progress_callback=None) -> Dict:
     """
     Fingerprint multiple services on open ports.
-    
+
     Args:
         host: Target hostname/IP
         ports: List of open ports
         progress_callback: Progress reporting callback
-        
+
     Returns:
         Dict mapping port -> service info
     """
@@ -311,13 +313,13 @@ def fingerprint_services(host: str, ports: List[int], progress_callback=None) ->
         "host": host,
         "services": {}
     }
-    
+
     total = len(ports)
     for idx, port in enumerate(ports):
         service_info = fingerprinter.fingerprint_port(host, port)
         results["services"][port] = service_info
-        
+
         if progress_callback:
             progress_callback(idx + 1, total)
-    
+
     return results

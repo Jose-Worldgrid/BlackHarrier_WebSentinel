@@ -1,3 +1,5 @@
+# Modulo de escaneo y analisis para memory.
+
 import json
 import os
 from datetime import datetime
