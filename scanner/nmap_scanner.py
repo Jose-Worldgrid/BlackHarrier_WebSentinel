@@ -2,6 +2,7 @@
 
 import ctypes
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -182,6 +184,79 @@ def _safe_kill(proc: subprocess.Popen | None):
         pass
 
 
+def _startupinfo_hidden():
+    if os.name != "nt":
+        return None
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 0
+    return info
+
+
+def _detect_nmap_version(nmap_bin: str) -> str:
+    try:
+        proc = subprocess.run(
+            [nmap_bin, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=12,
+            startupinfo=_startupinfo_hidden(),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        raw = str(proc.stdout or proc.stderr or "").strip()
+        first = raw.splitlines()[0].strip() if raw else ""
+        return first or "version_desconocida"
+    except Exception:
+        return "version_desconocida"
+
+
+def _persist_nmap_artifacts(
+    *,
+    xml_path: str,
+    scan_data: dict,
+    profile_key: str,
+    targets: list[str],
+    nmap_bin: str,
+    nmap_version: str,
+    timed_out: bool = False,
+) -> dict:
+    runs_dir = Path("logs") / "nmap_runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = runs_dir / f"nmap_{profile_key.lower()}_{stamp}"
+
+    xml_dump = str(base.with_suffix(".xml"))
+    json_dump = str(base.with_suffix(".json"))
+
+    try:
+        shutil.copy2(xml_path, xml_dump)
+    except Exception:
+        xml_dump = ""
+
+    payload = {
+        "meta": {
+            "timestamp": datetime.now().isoformat(),
+            "profile": profile_key,
+            "targets": list(targets or []),
+            "nmap_binary": nmap_bin,
+            "nmap_version": nmap_version,
+            "timed_out": bool(timed_out),
+            "hosts": len((scan_data or {}).get("hosts") or []),
+        },
+        "scan_data": scan_data or {"hosts": []},
+    }
+    try:
+        with open(json_dump, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+    except Exception:
+        json_dump = ""
+
+    return {"xml": xml_dump, "json": json_dump}
+
+
 def _run_nmap_command(cmd: list[str], timeout_seconds: int, cancel_event=None, progress_callback=None) -> tuple[int, str, str]:
     """Run nmap safely with timeout/cancellation support."""
     proc = subprocess.Popen(
@@ -191,6 +266,8 @@ def _run_nmap_command(cmd: list[str], timeout_seconds: int, cancel_event=None, p
         text=True,
         encoding="utf-8",
         errors="replace",
+        startupinfo=_startupinfo_hidden(),
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
     stdout_chunks = []
@@ -641,6 +718,7 @@ def run_nmap_recon(
         args.append("-sU")
 
     nmap_bin = _find_nmap_binary(nmap_path)
+    nmap_version = _detect_nmap_version(nmap_bin)
 
 
 
@@ -664,6 +742,17 @@ def run_nmap_recon(
         ]
 
         _emit(progress_callback, stage="nmap-start", detail=" ".join(cmd))
+        meta_row = {
+            "control": "Nmap detectado y preparado",
+            "status": "Detectado",
+            "severity": "Informativa",
+            "description": "El binario de Nmap fue detectado y se ejecuta mediante subprocess en segundo plano (sin ventana visible en Windows).",
+            "evidence": (
+                f"Binario: {nmap_bin} | Versión: {nmap_version} | "
+                f"Perfil: {profile_key} | Targets: {len(clean_targets)}"
+            ),
+            "recommendation": "Mantener Nmap actualizado y usar perfil KALI_FULL/DEEP para cobertura extensa en infraestructura autorizada.",
+        }
         rc, _stdout, stderr = _run_nmap_command(
             cmd,
             timeout_seconds=effective_timeout,
@@ -672,7 +761,7 @@ def run_nmap_recon(
         )
 
         if rc == 130:
-            return ([{
+            return ([meta_row, {
                 "control": "Nmap reconnaissance",
                 "status": "Error",
                 "severity": "Media",
@@ -686,7 +775,25 @@ def run_nmap_recon(
 
                 try:
                     scan_data = _parse_nmap_xml(xml_path, progress_callback=progress_callback)
-                    rows = normalize_nmap_results(scan_data, profile=profile_key)
+                    rows = [meta_row]
+                    rows.extend(normalize_nmap_results(scan_data, profile=profile_key))
+                    dumps = _persist_nmap_artifacts(
+                        xml_path=xml_path,
+                        scan_data=scan_data,
+                        profile_key=profile_key,
+                        targets=clean_targets,
+                        nmap_bin=nmap_bin,
+                        nmap_version=nmap_version,
+                        timed_out=True,
+                    )
+                    rows.append({
+                        "control": "Nmap volcado de resultados",
+                        "status": "Detectado",
+                        "severity": "Informativa",
+                        "description": "Se guardaron artefactos estructurados de Nmap para análisis posterior y trazabilidad.",
+                        "evidence": f"XML: {dumps.get('xml') or 'no generado'} | JSON: {dumps.get('json') or 'no generado'}",
+                        "recommendation": "Conservar estos artefactos para correlación, auditoría y comparación histórica.",
+                    })
                     rows.append({
                         "control": "Nmap reconnaissance (cobertura incompleta)",
                         "status": "No probado",
@@ -703,7 +810,7 @@ def run_nmap_recon(
                 except Exception:
                     pass
 
-            return ([{
+            return ([meta_row, {
                 "control": "Nmap reconnaissance (sin resultados por timeout)",
                 "status": "No probado",
                 "severity": "Media",
@@ -713,7 +820,7 @@ def run_nmap_recon(
             }], {"hosts": []})
 
         if not Path(xml_path).exists():
-            return ([{
+            return ([meta_row, {
                 "control": "Nmap reconnaissance",
                 "status": "Error",
                 "severity": "Media",
@@ -723,6 +830,24 @@ def run_nmap_recon(
             }], {"hosts": []})
 
         scan_data = _parse_nmap_xml(xml_path, progress_callback=progress_callback)
-        rows = normalize_nmap_results(scan_data, profile=profile_key)
+        rows = [meta_row]
+        rows.extend(normalize_nmap_results(scan_data, profile=profile_key))
+        dumps = _persist_nmap_artifacts(
+            xml_path=xml_path,
+            scan_data=scan_data,
+            profile_key=profile_key,
+            targets=clean_targets,
+            nmap_bin=nmap_bin,
+            nmap_version=nmap_version,
+            timed_out=False,
+        )
+        rows.append({
+            "control": "Nmap volcado de resultados",
+            "status": "Detectado",
+            "severity": "Informativa",
+            "description": "Se guardaron artefactos estructurados de Nmap para análisis posterior y trazabilidad.",
+            "evidence": f"XML: {dumps.get('xml') or 'no generado'} | JSON: {dumps.get('json') or 'no generado'}",
+            "recommendation": "Conservar estos artefactos para correlación, auditoría y comparación histórica.",
+        })
         _emit(progress_callback, stage="nmap-finished", detail=f"Hosts: {len(scan_data.get('hosts', []))}")
         return rows, scan_data

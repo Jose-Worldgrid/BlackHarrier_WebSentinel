@@ -1,6 +1,7 @@
 # Modulo principal que orquesta la interfaz, el flujo de auditoria y la consolidacion de resultados.
 
 import html
+import json
 import os
 import re
 import traceback
@@ -50,6 +51,11 @@ from scanner.port_services import scan_port_services
 from scanner.vuln_correlation import scan_vulnerability_correlation
 from scanner.nmap_scanner import run_nmap_recon
 from scanner.nessus_client import NessusConfig, run_nessus_assessment
+from scanner.infra_fingerprinter import (
+    obtener_infraestructura,
+    enriquecer_infraestructura_con_nmap,
+    construir_hallazgos_infraestructura,
+)
 from scanner.free_assessment import FreeAssessment
 from scanner.cve_lookup import CVELookup
 from scanner.cve_intel import enrich_cves_with_free_intel
@@ -107,6 +113,45 @@ def _get_report_bytes_if_available(report_path):
             return file.read()
     except Exception:
         return None
+
+
+def _export_full_scan_bundle(*, audit_name, target_url, scan_mode, all_results, pages, discovery, phase_state):
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", str(audit_name or "audit"))
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = os.path.join("logs", "scan_bundles")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{safe_name}_{stamp}.json")
+
+    payload = {
+        "meta": {
+            "generated_at": datetime.now().isoformat(),
+            "audit_name": audit_name,
+            "target_url": target_url,
+            "scan_mode": scan_mode,
+            "results_total": len(all_results or []),
+            "pages_total": len(pages or []),
+            "discovery_discovered_total": len((discovery or {}).get("discovered") or []),
+        },
+        "coverage": {
+            "nmap_enabled": bool((phase_state or {}).get("enable_nmap", False)),
+            "nmap_profile": str((phase_state or {}).get("nmap_profile", "")),
+            "nessus_enabled": bool((phase_state or {}).get("enable_nessus", False)),
+        },
+        "artifacts": {
+            "nmap_structured": (phase_state or {}).get("nmap_structured") or {"hosts": []},
+            "nessus_structured": (phase_state or {}).get("nessus_structured") or {"scan_id": None, "vulnerabilities": []},
+            "external_pipeline": (phase_state or {}).get("external_pipeline") or {},
+            "infraestructura_target": (phase_state or {}).get("infraestructura_target") or {},
+        },
+        "discovery": discovery or {},
+        "pages": pages or [],
+        "results": all_results or [],
+    }
+
+    with open(out_path, "w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+
+    return out_path
 
 
 def _normalize_target_url(raw_url: str) -> str:
@@ -3512,6 +3557,17 @@ def _scan_phase1(
     auth_cookie_snapshot = {}
     auth_cookie_details_snapshot = []
     post_login_http_events = []
+    infraestructura_target = {
+        "hostname_limpio": "",
+        "url_normalizada": "",
+        "ips_resueltas": [],
+        "ips_publicas": [],
+        "clasificaciones": [],
+        "etiquetas_globales": [],
+        "evidencias": {"dns": [], "http": [], "banner": [], "puertos": {}},
+        "infraestructura_por_ip": [],
+        "errores": [],
+    }
 
     st.markdown(
         f"""
@@ -3523,6 +3579,18 @@ def _scan_phase1(
         """,
         unsafe_allow_html=True,
     )
+
+    with st.spinner("Fingerprint de infraestructura objetivo (DNS/IP/proveedor)..."):
+        try:
+            infraestructura_target = obtener_infraestructura(target_url)
+            all_results.extend(normalize_results("Infraestructura target", construir_hallazgos_infraestructura(infraestructura_target)))
+        except Exception:
+            all_results.extend(normalize_results("Infraestructura target", [pipeline_error_result(
+                control="Fingerprint de infraestructura",
+                description="No se pudo obtener huella inicial de infraestructura; se continúa con el pipeline.",
+                evidence=traceback.format_exc()[:280],
+                recommendation="Validar resolución DNS/salida de red y reintentar si se requiere trazabilidad de infraestructura.",
+            )]))
 
     with st.spinner("Crawling completo del objetivo..."):
         try:
@@ -3596,6 +3664,7 @@ def _scan_phase1(
                 max_active_checks=active_checks_budget,
                 extra_candidate_urls=discovery_scope_urls,
             )
+            discovery["infraestructura_target"] = infraestructura_target
         except Exception:
             discovery = {
                 "pages": list(crawler_pages),
@@ -3607,6 +3676,7 @@ def _scan_phase1(
                     recommendation="Validar estabilidad del objetivo, límites de rate-limit y errores SSL.",
                 )],
                 "metrics": {},
+                "infraestructura_target": infraestructura_target,
             }
 
     pages = discovery.get("pages") or []
@@ -3988,6 +4058,7 @@ def _scan_phase1(
 
     nmap_structured = {"hosts": []}
     nessus_structured = {"scan_id": None, "vulnerabilities": []}
+    external_pipeline = {}
     _all_cves_found: list = []
     external_hosts = external_targets.get("hosts", [])
     candidate_targets = []
@@ -4031,6 +4102,17 @@ def _scan_phase1(
                 progress_callback=nmap_progress,
             )
         all_results.extend(normalize_results("Nmap reconnaissance", nmap_rows))
+        try:
+            infraestructura_target = enriquecer_infraestructura_con_nmap(infraestructura_target, nmap_structured)
+            discovery["infraestructura_target"] = infraestructura_target
+            all_results.extend(normalize_results("Infraestructura target", construir_hallazgos_infraestructura(infraestructura_target)))
+        except Exception:
+            all_results.extend(normalize_results("Infraestructura target", [pipeline_error_result(
+                control="Enriquecimiento de infraestructura con Nmap",
+                description="No se pudo correlacionar infraestructura con puertos/NSE de Nmap.",
+                evidence=traceback.format_exc()[:280],
+                recommendation="Revisar formato de salida de Nmap y host mapping por IP.",
+            )]))
 
         parity_enabled = bool(st.session_state.get("_parity_nmap_nessus", False))
         if parity_enabled or str(nmap_profile or "").upper() in {"DEEP", "AGGRESSIVE", "KALI_FULL"}:
@@ -4326,6 +4408,7 @@ def _scan_phase1(
         "all_results": all_results,
         "pages": pages,
         "discovery": discovery,
+        "infraestructura_target": infraestructura_target,
         "discovered_urls": discovered_urls,
         "crawler_pages": crawler_pages,
         "auth_client_cfg": {"verify_ssl": verify_ssl},
@@ -4366,6 +4449,9 @@ def _scan_phase1(
         "sqli_intensity": st.session_state.get("_sqli_intensity", "Normal - 30 payloads"),
         "strict_fp_mode": bool(strict_fp_mode),
         "candidate_targets": candidate_targets,
+        "nmap_structured": nmap_structured,
+        "nessus_structured": nessus_structured,
+        "external_pipeline": external_pipeline,
     }
 
 
@@ -5278,6 +5364,27 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     st.session_state["phase2_done"] = True
     st.session_state["phase1_state"] = None
 
+    full_bundle_path = ""
+    try:
+        full_bundle_path = _export_full_scan_bundle(
+            audit_name=audit_name,
+            target_url=target_url,
+            scan_mode=scan_mode,
+            all_results=all_results,
+            pages=pages,
+            discovery=discovery,
+            phase_state=state,
+        )
+        st.session_state["last_full_bundle_path"] = full_bundle_path
+    except Exception:
+        st.session_state["last_full_bundle_path"] = ""
+        all_results.extend(normalize_results("Persistencia", [pipeline_error_result(
+            control="Exportación de bundle completo",
+            description="No se pudo volcar el bundle completo de resultados técnicos.",
+            evidence=traceback.format_exc()[:280],
+            recommendation="Revisar permisos de escritura en logs/scan_bundles.",
+        )]))
+
     report_path = None
     try:
         report_path = generate_word_report(
@@ -5289,6 +5396,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             pages_count=len(pages),
             scan_mode=scan_mode,
             auth_cookie_details=state.get("auth_cookie_details") or [],
+            full_bundle_path=full_bundle_path,
         )
         st.session_state["last_report_path"] = report_path
         st.session_state["last_report_bytes"] = _get_report_bytes_if_available(report_path)

@@ -957,6 +957,16 @@ def _is_low_value_repeated_row(item: dict) -> bool:
         if any(tok in blob for tok in ["404", "soft_404", "html_candidate", "request_error"]):
             return True
 
+    if module == "Nmap reconnaissance":
+        if control.startswith("nmap servicio expuesto"):
+            sev = safe_text(item.get("Severidad", "")).strip()
+            status = safe_text(item.get("Resultado", "")).strip()
+            low_signal = all(tok not in evidence.lower() for tok in ["producto:", "versión:", "cpe:", "nse:"])
+            if sev in {"Baja", "Informativa"} and status == "Detectado" and low_signal:
+                return True
+        if control == "nmap host discovery" and "puertos abiertos: 0" in evidence.lower():
+            return True
+
     return False
 
 
@@ -2402,6 +2412,171 @@ def add_discovery_dictionary_section(document, discovery):
     )
 
 
+def add_target_infrastructure_section(document, discovery):
+    document.add_heading("2. Huella de infraestructura objetivo", 1)
+
+    infra = {}
+    if isinstance(discovery, dict):
+        infra = discovery.get("infraestructura_target") or {}
+
+    if not infra:
+        document.add_paragraph("No se encontró estructura de infraestructura objetivo en esta ejecución.")
+        return
+
+    hostname = safe_text(infra.get("hostname_limpio", ""))
+    ips_publicas = infra.get("ips_publicas") or []
+    etiquetas = infra.get("etiquetas_globales") or infra.get("clasificaciones") or []
+    evidencias = infra.get("evidencias") or {}
+
+    kpi = document.add_table(rows=1, cols=4)
+    kpi.style = "Table Grid"
+    hdr = kpi.rows[0].cells
+    hdr[0].text = "Hostname"
+    hdr[1].text = "IPs publicas"
+    hdr[2].text = "Clasificacion"
+    hdr[3].text = "Evidencias"
+    style_header_row(kpi.rows[0])
+
+    row = kpi.add_row().cells
+    row[0].text = truncate(hostname or "no disponible", 120)
+    row[1].text = truncate(", ".join(str(x) for x in ips_publicas) if ips_publicas else "ninguna", 180)
+    row[2].text = truncate(" | ".join(str(x) for x in etiquetas) if etiquetas else "sin clasificacion", 260)
+    row[3].text = truncate(
+        (
+            f"DNS: {', '.join(evidencias.get('dns') or [])[:140] or '-'} | "
+            f"HTTP: {', '.join(evidencias.get('http') or [])[:140] or '-'}"
+        ),
+        320,
+    )
+
+    ip_rows = infra.get("infraestructura_por_ip") or []
+    if not ip_rows:
+        document.add_paragraph("No se identificaron detalles por IP en la huella de infraestructura.")
+        return
+
+    document.add_paragraph("Detalle por IP resuelta")
+    table = document.add_table(rows=1, cols=5)
+    table.style = "Table Grid"
+    h2 = table.rows[0].cells
+    h2[0].text = "IP"
+    h2[1].text = "Tipo"
+    h2[2].text = "Pertenece a"
+    h2[3].text = "Puertos / Servicios"
+    h2[4].text = "Etiquetas"
+    style_header_row(table.rows[0])
+
+    for item in ip_rows:
+        cells = table.add_row().cells
+        cells[0].text = truncate(safe_text(item.get("ip", "")), 80)
+        cells[1].text = truncate(safe_text(item.get("tipo_ip", "")), 50)
+        cells[2].text = truncate(safe_text(item.get("pertenece_a", "Infraestructura objetivo / no concluyente")), 130)
+        cells[3].text = truncate(
+            (
+                f"Puertos: {', '.join(str(p) for p in (item.get('puertos_abiertos') or [])) or '-'} | "
+                f"Servicios: {', '.join(str(s) for s in (item.get('servicios_detectados') or [])) or '-'}"
+            ),
+            180,
+        )
+        cells[4].text = truncate(" | ".join(str(x) for x in (item.get("clasificacion") or [])) or "-", 260)
+
+
+def add_full_coverage_annex(document, raw_results, discovery, full_bundle_path=""):
+    document.add_heading("13. Anexo técnico de cobertura completa (sin recorte)", 1)
+
+    rows = [row for row in (raw_results or []) if isinstance(row, dict)]
+    document.add_paragraph(
+        "Este anexo usa resultados crudos sin deduplicación para asegurar trazabilidad completa de ejecución "
+        "(Nmap, Nessus, fuzzing web, crawling y módulos auxiliares)."
+    )
+    document.add_paragraph(f"Eventos técnicos crudos registrados: {len(rows)}")
+
+    module_counter = Counter(safe_text(x.get("Módulo", "Sin módulo")) for x in rows)
+    module_table = document.add_table(rows=1, cols=5)
+    module_table.style = "Table Grid"
+    mh = module_table.rows[0].cells
+    mh[0].text = "Módulo"
+    mh[1].text = "Total eventos"
+    mh[2].text = "Hallazgos"
+    mh[3].text = "Errores"
+    mh[4].text = "Cobertura"
+    style_header_row(module_table.rows[0])
+
+    for module, total in sorted(module_counter.items(), key=lambda item: (-item[1], item[0])):
+        subset = [x for x in rows if safe_text(x.get("Módulo", "")) == module]
+        findings = len([x for x in subset if is_finding(x)])
+        errors = len([x for x in subset if is_error(x)])
+        if findings > 0:
+            coverage = "Con hallazgos"
+        elif errors > 0:
+            coverage = "Incompleta"
+        else:
+            coverage = "Ejecutada"
+
+        r = module_table.add_row().cells
+        r[0].text = truncate(module, 80)
+        r[1].text = str(total)
+        r[2].text = str(findings)
+        r[3].text = str(errors)
+        r[4].text = coverage
+
+    required = {
+        "Crawler": "Crawling",
+        "Discovery": "Discovery web",
+        "Pipeline externo OSS": "Fuzzing/Katana/HTTPX/Nuclei",
+        "Nmap reconnaissance": "Nmap",
+        "Nessus/Tenable": "Nessus",
+    }
+    document.add_paragraph("Validación de cobertura requerida")
+    req_table = document.add_table(rows=1, cols=3)
+    req_table.style = "Table Grid"
+    rh = req_table.rows[0].cells
+    rh[0].text = "Capacidad"
+    rh[1].text = "Módulo"
+    rh[2].text = "Estado"
+    style_header_row(req_table.rows[0])
+
+    for module_name, capability in required.items():
+        count = module_counter.get(module_name, 0)
+        status = "Ejecutado" if count > 0 else "No ejecutado"
+        rr = req_table.add_row().cells
+        rr[0].text = capability
+        rr[1].text = module_name
+        rr[2].text = status
+
+    discovery_obj = discovery if isinstance(discovery, dict) else {}
+    metrics = discovery_obj.get("metrics") or {}
+    if metrics:
+        document.add_paragraph(
+            "Discovery métricas: "
+            f"total_discovered={metrics.get('total_discovered', 0)} | "
+            f"reportable_discovered={metrics.get('reportable_discovered', 0)} | "
+            f"soft_404={metrics.get('soft_404', 0)}"
+        )
+
+    artifact_paths = []
+    if full_bundle_path:
+        artifact_paths.append(full_bundle_path)
+    for item in rows:
+        if safe_text(item.get("Control", "")) != "Nmap volcado de resultados":
+            continue
+        evidence = safe_text(item.get("Evidencia", ""))
+        for token in evidence.split("|"):
+            token = token.strip()
+            if ":" not in token:
+                continue
+            key, value = token.split(":", 1)
+            if key.strip().lower() in {"xml", "json"}:
+                path_text = value.strip()
+                if path_text and path_text.lower() != "no generado":
+                    artifact_paths.append(path_text)
+
+    artifact_paths = list(dict.fromkeys(artifact_paths))
+    if artifact_paths:
+        document.add_paragraph("Artefactos técnicos generados")
+        for path in artifact_paths[:20]:
+            document.add_paragraph(path, style="List Bullet")
+
+
 def add_conclusion(document, findings, errors, results=None):
     document.add_heading("12. Conclusión y próximos pasos", 1)
 
@@ -2450,6 +2625,7 @@ def generate_word_report(
     pages_count: int | None = None,
     scan_mode: str | None = None,
     auth_cookie_details: list | None = None,
+    full_bundle_path: str | None = None,
 ):
     os.makedirs("generated_reports", exist_ok=True)
 
@@ -2541,6 +2717,7 @@ def generate_word_report(
     add_summary_table(document, findings, errors, oks)
     add_severity_table(document, findings)
     add_c_level_one_page_summary(document, target_url, findings, errors, assets, deduped_results)
+    add_target_infrastructure_section(document, discovery)
 
 
     add_sensitive_assets_section(document, assets)
@@ -2556,14 +2733,26 @@ def generate_word_report(
 
 
     add_top_findings_table(document, findings)
+    add_cases_checked(document, deduped_results)
+    add_test_path_summary(document, pages=pages, pages_count=pages_count)
+    add_attack_timeline_section(document, deduped_results)
+    add_offensive_coverage_section(document, deduped_results)
     add_business_risk_matrix(document, findings)
     add_compliance_mapping(document, findings)
     add_manual_offensive_backlog(document, findings, pages, assets)
     add_defensive_playbook(document, assets, findings)
     add_asset_risk_scoring_section(document, findings, assets, deduped_results)
+    add_detailed_findings(document, findings)
 
 
     add_execution_errors_table(document, errors)
+
+    add_full_coverage_annex(
+        document,
+        raw_results=results,
+        discovery=discovery,
+        full_bundle_path=str(full_bundle_path or ""),
+    )
 
 
 
