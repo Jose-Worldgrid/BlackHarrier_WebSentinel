@@ -1,4 +1,11 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$Script:RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Script:ToolsDir = Join-Path $Script:RootDir ".tools"
+$Script:BinDir = Join-Path $Script:ToolsDir "bin"
+$Script:TempDir = Join-Path $Script:ToolsDir "_tmp"
+$Script:SqlmapDir = Join-Path $Script:ToolsDir "sqlmap"
 
 function Write-Step {
     param([string]$Message)
@@ -20,51 +27,15 @@ function Write-Fail {
     Write-Host "[ERROR] $Message" -ForegroundColor Red
 }
 
-function Write-Centered {
-    param(
-        [string]$Text,
-        [ConsoleColor]$Color = [ConsoleColor]::Gray
-    )
-
-    $width = [Math]::Max(60, $Host.UI.RawUI.WindowSize.Width)
-    $clean = ([string]$Text).Replace("`t", "    ")
-    $pad = [Math]::Max(0, [int](($width - $clean.Length) / 2))
-    Write-Host ((" " * $pad) + $clean) -ForegroundColor $Color
-}
-
 function Write-Left {
     param(
         [string]$Text,
         [ConsoleColor]$Color = [ConsoleColor]::Gray,
         [int]$Indent = 6
     )
-
     $clean = ([string]$Text).Replace("`t", "    ")
     $leftPad = " " * [Math]::Max(0, $Indent)
     Write-Host ($leftPad + $clean) -ForegroundColor $Color
-}
-
-function Write-Right {
-    param(
-        [string]$Text,
-        [ConsoleColor]$Color = [ConsoleColor]::Gray,
-        [int]$RightPadding = 2
-    )
-
-    $clean = ([string]$Text).Replace("`t", "    ")
-    $width = [Math]::Max(60, $Host.UI.RawUI.WindowSize.Width)
-    $pad = [Math]::Max(0, $width - $clean.Length - [Math]::Max(0, $RightPadding))
-    Write-Host ((" " * $pad) + $clean) -ForegroundColor $Color
-}
-
-function Write-Bar {
-    param(
-        [ConsoleColor]$Color = [ConsoleColor]::Red,
-        [int]$Length = 108
-    )
-    $len = [Math]::Max(60, $Length)
-    $bar = ("/" * $len)
-    Write-Left $bar -Color $Color -Indent 4
 }
 
 function Write-BrandArtLine {
@@ -73,7 +44,6 @@ function Write-BrandArtLine {
         [int]$RedChars = 30,
         [int]$Indent = 0
     )
-
     $safe = [string]$Line
     $pad = " " * [Math]::Max(0, $Indent)
 
@@ -84,14 +54,13 @@ function Write-BrandArtLine {
 
     $left = $safe.Substring(0, $RedChars)
     $right = $safe.Substring($RedChars)
-
     Write-Host ($pad + $left) -NoNewline -ForegroundColor DarkRed
     Write-Host $right -ForegroundColor White
 }
 
 function Show-Banner {
     Clear-Host
-        Write-Host ""
+    Write-Host ""
     Write-BrandArtLine "████  █      ███   ███  █   █ █   █  ███  ████  ████  ███ █████ ████    "
     Write-BrandArtLine "█░░░█ █░    █ ░░█ █ ░░░ █░ █ ░█░  █░█ ░░█ █░░░█ █░░░█  █░░█░░░░░█░░░█   "
     Write-BrandArtLine "████░░█░░   █████░█░ ░░░███ ░ █████░█████░████░░████░░ █░░████░░████░░  "
@@ -100,8 +69,7 @@ function Show-Banner {
     Write-BrandArtLine " ░░░░ ░░░░░░ ░░  ░░ ░░░  ░░  ░ ░░  ░░░░  ░░░░  ░ ░░  ░ ░░░ ░░░░░ ░░  ░  "
     Write-BrandArtLine "  ░░░░  ░░░░░ ░   ░  ░░░  ░   ░ ░   ░ ░   ░ ░   ░ ░   ░ ░░░ ░░░░░ ░   ░ "
     Write-Host ""
-        Write-Host "" -NoNewline
-        Write-Host "by Jose" -ForegroundColor White
+    Write-Host "by Jose" -ForegroundColor White
     Write-Host ""
     Write-Left "Setup Console (Windows)" -Color Gray -Indent 0
     Write-Host ""
@@ -123,10 +91,46 @@ function Add-PathIfMissing {
     param([string]$Candidate)
     if ([string]::IsNullOrWhiteSpace($Candidate)) { return }
     if (-not (Test-Path $Candidate)) { return }
-    $parts = ($env:PATH -split ';') | ForEach-Object { $_.Trim() }
-    if ($parts -notcontains $Candidate) {
+
+    $parts = ($env:PATH -split ';') | ForEach-Object { $_.TrimEnd('\') }
+    $normalized = $Candidate.TrimEnd('\')
+
+    if ($parts -notcontains $normalized) {
         $env:PATH = "$Candidate;$env:PATH"
     }
+}
+
+function Add-UserPathIfMissing {
+    param([string]$Candidate)
+    if ([string]::IsNullOrWhiteSpace($Candidate)) { return }
+    if (-not (Test-Path $Candidate)) { return }
+
+    Add-PathIfMissing $Candidate
+
+    try {
+        $current = [Environment]::GetEnvironmentVariable("Path", "User")
+        if ([string]::IsNullOrWhiteSpace($current)) {
+            [Environment]::SetEnvironmentVariable("Path", $Candidate, "User")
+            Write-Ok "PATH de usuario actualizado: $Candidate"
+            return
+        }
+
+        $parts = $current -split ';' | ForEach-Object { $_.TrimEnd('\') }
+        if ($parts -notcontains $Candidate.TrimEnd('\')) {
+            [Environment]::SetEnvironmentVariable("Path", "$Candidate;$current", "User")
+            Write-Ok "PATH de usuario actualizado: $Candidate"
+        }
+    }
+    catch {
+        Write-Warn "No se pudo actualizar el PATH de usuario: $($_.Exception.Message)"
+    }
+}
+
+function Initialize-ToolFolders {
+    New-Item -ItemType Directory -Force -Path $Script:ToolsDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $Script:BinDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $Script:TempDir | Out-Null
+    Add-PathIfMissing $Script:BinDir
 }
 
 function Get-PythonCommand {
@@ -135,194 +139,211 @@ function Get-PythonCommand {
     return $null
 }
 
-function Ensure-ExecutionPolicy {
-    Write-Step "Configurando politica de ejecucion para CurrentUser..."
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-    Write-Ok "Politica de ejecucion aplicada"
-}
-
-function Ensure-Scoop {
-    Write-Step "Comprobando Scoop..."
-    if (Test-Command "scoop") {
-        Write-Ok "Scoop ya estaba instalado"
-    }
-    else {
-        try {
-            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-            Write-Ok "Scoop instalado"
-        }
-        catch {
-            Write-Fail "No se pudo instalar Scoop"
-            Write-Fail $_.Exception.Message
-            throw
-        }
-    }
-    Add-PathIfMissing "$env:USERPROFILE\scoop\shims"
-}
-
-function Install-PDToolFromZip {
+function Invoke-External {
     param(
-        [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][string]$Version,
-        [Parameter(Mandatory = $true)][string]$Url,
-        [Parameter(Mandatory = $true)][string]$ZipPath,
-        [Parameter(Mandatory = $true)][string]$DestinationPath,
-        [Parameter(Mandatory = $true)][string]$CommandName
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [switch]$IgnoreExitCode
     )
 
-    if (Test-Command $CommandName) {
-        Write-Ok "$Name ya estaba instalado"
+    & $FilePath @Arguments
+    $code = $LASTEXITCODE
+
+    if ((-not $IgnoreExitCode) -and ($null -ne $code) -and ($code -ne 0)) {
+        throw "Comando fallido ($code): $FilePath $($Arguments -join ' ')"
+    }
+
+    return $code
+}
+
+function Download-File {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$OutFile
+    )
+
+    $parent = Split-Path -Parent $OutFile
+    if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+
+    Write-Host "    Descargando: $Url" -ForegroundColor DarkGray
+
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -Headers @{ "User-Agent" = "BlackHarrier-Setup" }
+    }
+    catch {
+        throw "No se pudo descargar $Url. Detalle: $($_.Exception.Message)"
+    }
+}
+
+function Expand-ZipSafe {
+    param(
+        [Parameter(Mandatory = $true)][string]$ZipPath,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    if (Test-Path $Destination) { Remove-Item -Recurse -Force $Destination }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Expand-Archive -Path $ZipPath -DestinationPath $Destination -Force
+}
+
+function Find-ExecutableInFolder {
+    param(
+        [Parameter(Mandatory = $true)][string]$Folder,
+        [Parameter(Mandatory = $true)][string]$ExeName
+    )
+
+    if (-not (Test-Path $Folder)) { return $null }
+
+    $direct = Join-Path $Folder $ExeName
+    if (Test-Path $direct) { return $direct }
+
+    $found = Get-ChildItem -Path $Folder -Recurse -File -Filter $ExeName -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { return $found.FullName }
+
+    return $null
+}
+
+function Install-GitHubReleaseTool {
+    param(
+        [Parameter(Mandatory = $true)][string]$Owner,
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string]$ToolCommand,
+        [Parameter(Mandatory = $true)][string]$ExeName,
+        [Parameter(Mandatory = $true)][string[]]$AssetPatterns
+    )
+
+    Write-Step "Comprobando $ToolCommand..."
+
+    $targetExe = Join-Path $Script:BinDir $ExeName
+    if (Test-Path $targetExe) {
+        Write-Ok "$ToolCommand ya estaba instalado en .tools\bin"
         return
     }
 
-    Write-Step "Instalando $Name v$Version..."
+    if (Test-Command $ToolCommand) {
+        Write-Ok "$ToolCommand ya estaba instalado en el sistema"
+        return
+    }
+
+    $apiUrl = "https://api.github.com/repos/$Owner/$Repo/releases/latest"
+    Write-Host "    Consultando ultima release: $Owner/$Repo" -ForegroundColor DarkGray
+
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $ZipPath
-        Expand-Archive -Path $ZipPath -DestinationPath $DestinationPath -Force
-        if (Test-Command $CommandName) {
-            Write-Ok "$Name v$Version instalado"
-        }
-        else {
-            Write-Warn "$Name instalado, pero puede requerir abrir una nueva consola para PATH"
-        }
+        $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "BlackHarrier-Setup" }
     }
     catch {
-        Write-Fail "No se pudo instalar $Name desde $Url"
-        Write-Fail $_.Exception.Message
-        throw
+        throw "No se pudo consultar GitHub para $ToolCommand. Detalle: $($_.Exception.Message)"
     }
+
+    $asset = $null
+    foreach ($pattern in $AssetPatterns) {
+        $asset = $release.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+        if ($asset) { break }
+    }
+
+    if (-not $asset) {
+        $available = ($release.assets | Select-Object -ExpandProperty name) -join ", "
+        throw "No se encontro asset Windows x64 para $ToolCommand. Assets disponibles: $available"
+    }
+
+    $downloadPath = Join-Path $Script:TempDir $asset.name
+    $extractPath = Join-Path $Script:TempDir "$ToolCommand-extracted"
+
+    Download-File -Url $asset.browser_download_url -OutFile $downloadPath
+
+    if ($asset.name -match '\.zip$') {
+        Expand-ZipSafe -ZipPath $downloadPath -Destination $extractPath
+        $sourceExe = Find-ExecutableInFolder -Folder $extractPath -ExeName $ExeName
+        if (-not $sourceExe) {
+            throw "No se encontro $ExeName dentro de $($asset.name)"
+        }
+        Copy-Item -Path $sourceExe -Destination $targetExe -Force
+    }
+    elseif ($asset.name -match '\.exe$') {
+        Copy-Item -Path $downloadPath -Destination $targetExe -Force
+    }
+    else {
+        throw "Asset no soportado para ${ToolCommand}: $($asset.name)"
+    }
+
+    if (-not (Test-Path $targetExe)) {
+        throw "Instalacion incompleta de $ToolCommand"
+    }
+
+    Write-Ok "$ToolCommand instalado en .tools\bin"
 }
 
-function Ensure-ProjectDiscoveryTools {
-    # Orden estricto solicitado: HTTPX -> NUCLEI -> KATANA
-    Write-Step "Comprobando/instalando binarios ProjectDiscovery (orden estricto)..."
-
-    $scoopShims = "$env:USERPROFILE\scoop\shims"
-    if (-not (Test-Path $scoopShims)) {
-        New-Item -ItemType Directory -Path $scoopShims -Force | Out-Null
-    }
-
-    $httpxZip = "$env:USERPROFILE\httpx.zip"
-    $nucleiZip = "$env:USERPROFILE\nuclei.zip"
-    $katanaZip = "$env:USERPROFILE\katana.zip"
-
-    Install-PDToolFromZip -Name "HTTPX" -Version "1.6.4" -Url "https://github.com/projectdiscovery/httpx/releases/download/v1.6.4/httpx_1.6.4_windows_amd64.zip" -ZipPath $httpxZip -DestinationPath $scoopShims -CommandName "httpx"
-    Install-PDToolFromZip -Name "NUCLEI" -Version "3.3.4" -Url "https://github.com/projectdiscovery/nuclei/releases/download/v3.3.4/nuclei_3.3.4_windows_amd64.zip" -ZipPath $nucleiZip -DestinationPath $scoopShims -CommandName "nuclei"
-    Install-PDToolFromZip -Name "KATANA" -Version "1.6.1" -Url "https://github.com/projectdiscovery/katana/releases/download/v1.6.1/katana_1.6.1_windows_amd64.zip" -ZipPath $katanaZip -DestinationPath $scoopShims -CommandName "katana"
-
-    Write-Step "Limpiando zips temporales..."
-    Remove-Item "$env:USERPROFILE\httpx.zip", "$env:USERPROFILE\nuclei.zip", "$env:USERPROFILE\katana.zip" -Force -ErrorAction SilentlyContinue
-    Write-Ok "Temporales eliminados"
-
-    Write-Step "Actualizando templates de Nuclei..."
+function Ensure-ExecutionPolicy {
+    Write-Step "Comprobando politica de ejecucion de PowerShell..."
     try {
-        if (Test-Command "nuclei") {
-            nuclei -update-templates | Out-Host
-        }
-        elseif (Test-Path "$env:USERPROFILE\scoop\shims\nuclei.exe") {
-            & "$env:USERPROFILE\scoop\shims\nuclei.exe" -update-templates | Out-Host
-        }
-        else {
-            Write-Warn "Nuclei no detectado para actualizar templates"
-        }
-        Write-Ok "Proceso de templates completado"
+        $policy = Get-ExecutionPolicy
+        Write-Ok "Politica efectiva actual: $policy"
+        Write-Ok "El script usa -ExecutionPolicy Bypass solo durante esta ejecucion; no modifica politicas permanentes"
     }
     catch {
-        Write-Warn "No se pudo ejecutar nuclei -update-templates: $($_.Exception.Message)"
+        Write-Warn "No se pudo consultar la politica de ejecucion: $($_.Exception.Message)"
     }
 }
 
 function Ensure-Python {
     Write-Step "Comprobando Python 3.11+..."
+
     $pythonCmd = Get-PythonCommand
     if ($pythonCmd) {
-        Write-Ok "Python ya instalado"
-        return $pythonCmd
+        try {
+            if ($pythonCmd -eq "py") {
+                $versionOutput = & py -3 --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok "Python detectado: $versionOutput"
+                    return "py"
+                }
+            }
+            else {
+                $versionOutput = & python --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok "Python detectado: $versionOutput"
+                    return "python"
+                }
+            }
+        }
+        catch { }
     }
 
     if (-not (Test-Command "winget")) {
-        throw "Python no esta instalado y winget no esta disponible para instalarlo automaticamente."
+        throw "Python no esta instalado y winget no esta disponible. Instala Python 3.11+ y vuelve a ejecutar el setup."
     }
 
-    Write-Step "Python no detectado. Instalando con winget..."
-    winget install -e --id Python.Python.3.11 --scope user --accept-package-agreements --accept-source-agreements | Out-Host
+    Write-Step "Python no detectado. Instalando Python con winget..."
+    Invoke-External -FilePath "winget" -Arguments @("install", "-e", "--id", "Python.Python.3.12", "--accept-source-agreements", "--accept-package-agreements") -IgnoreExitCode | Out-Null
 
-    Add-PathIfMissing "$env:LOCALAPPDATA\Programs\Python\Python311"
-    Add-PathIfMissing "$env:LOCALAPPDATA\Programs\Python\Python311\Scripts"
+    Add-PathIfMissing "$env:LOCALAPPDATA\Programs\Python\Python312"
+    Add-PathIfMissing "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts"
+    Add-PathIfMissing "$env:LOCALAPPDATA\Microsoft\WindowsApps"
 
     $pythonCmd = Get-PythonCommand
     if (-not $pythonCmd) {
-        throw "Python no esta disponible tras la instalacion automatica."
+        throw "Python se instalo, pero no esta visible en PATH. Cierra y abre PowerShell o revisa la instalacion."
     }
 
     Write-Ok "Python instalado"
     return $pythonCmd
 }
 
-function Ensure-Nmap {
-    Write-Step "Comprobando Nmap..."
-    if (Test-Command "nmap") {
-        Write-Ok "Nmap ya instalado"
-        return
-    }
-
-    if (-not (Test-Command "winget")) {
-        Write-Warn "Nmap no instalado y winget no disponible. Instala manualmente desde https://nmap.org/download.html#windows"
-        return
-    }
-
-    try {
-        Write-Step "Nmap no detectado. Instalando con winget..."
-        winget install -e --id Insecure.Nmap --accept-package-agreements --accept-source-agreements | Out-Host
-        if (Test-Command "nmap") {
-            Write-Ok "Nmap instalado"
-        }
-        else {
-            Write-Warn "Nmap instalado, pero no visible aun en PATH actual"
-        }
-    }
-    catch {
-        Write-Warn "No se pudo instalar Nmap automaticamente: $($_.Exception.Message)"
-    }
-}
-
-function Install-OptionalScoopTool {
-    param([string]$ToolName)
-
-    if (Test-Command $ToolName) {
-        Write-Ok "$ToolName ya estaba instalado"
-        return
-    }
-
-    Write-Step "Instalando $ToolName con Scoop..."
-    try {
-        scoop install $ToolName | Out-Host
-        if (Test-Command $ToolName) {
-            Write-Ok "$ToolName instalado"
-        }
-        else {
-            Write-Warn "$ToolName instalado, pero no visible aun en PATH actual"
-        }
-    }
-    catch {
-        Write-Warn "No se pudo instalar $ToolName con Scoop: $($_.Exception.Message)"
-    }
-}
-
 function Ensure-PythonProject {
-    param([string]$PythonCmd)
+    param([Parameter(Mandatory = $true)][string]$PythonCmd)
 
-    Write-Step "Comprobando entorno virtual .venv..."
-    $venvPath = Join-Path $PSScriptRoot ".venv"
+    $venvPath = Join-Path $Script:RootDir ".venv"
     $venvPython = Join-Path $venvPath "Scripts\python.exe"
 
+    Write-Step "Comprobando entorno virtual .venv..."
+
     if (-not (Test-Path $venvPython)) {
-        Write-Step "Entorno virtual no detectado. Creando .venv..."
+        Write-Step "Creando entorno virtual..."
         if ($PythonCmd -eq "py") {
-            py -3 -m venv $venvPath
+            Invoke-External -FilePath "py" -Arguments @("-3", "-m", "venv", ".venv")
         }
         else {
-            python -m venv $venvPath
+            Invoke-External -FilePath $PythonCmd -Arguments @("-m", "venv", ".venv")
         }
         Write-Ok "Entorno virtual creado"
     }
@@ -330,210 +351,346 @@ function Ensure-PythonProject {
         Write-Ok "Entorno virtual ya existe"
     }
 
-    if (-not (Test-Path $venvPython)) {
-        throw "No se pudo inicializar .venv"
+    Write-Step "Actualizando pip, setuptools y wheel..."
+    Invoke-External -FilePath $venvPython -Arguments @("-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel")
+
+    $requirements = Join-Path $Script:RootDir "requirements.txt"
+    if (Test-Path $requirements) {
+        Write-Step "Instalando dependencias Python del proyecto..."
+        Invoke-External -FilePath $venvPython -Arguments @("-m", "pip", "install", "-r", $requirements)
+    }
+    else {
+        Write-Warn "requirements.txt no encontrado. Se instalaran dependencias minimas."
+        Invoke-External -FilePath $venvPython -Arguments @("-m", "pip", "install", "streamlit", "requests", "beautifulsoup4", "playwright", "python-docx", "pandas", "dnspython", "pytest", "lxml")
     }
 
-    # A veces existe .venv pero incompleto (sin pip). En ese caso se recrea.
-    $pipReady = $false
-    try {
-        & $venvPython -m pip --version | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            $pipReady = $true
-        }
-    }
-    catch {
-        $pipReady = $false
-    }
-
-    if (-not $pipReady) {
-        Write-Warn ".venv detectado pero incompleto (pip no disponible). Recreando entorno..."
-        if (Test-Path $venvPath) {
-            Remove-Item -Path $venvPath -Recurse -Force -ErrorAction SilentlyContinue
-        }
-
-        if ($PythonCmd -eq "py") {
-            py -3 -m venv $venvPath
-        }
-        else {
-            python -m venv $venvPath
-        }
-
-        if (-not (Test-Path $venvPython)) {
-            throw "No se pudo recrear .venv"
-        }
-
-        & $venvPython -m ensurepip --upgrade | Out-Null
-    }
-
-    $requirementsPath = Join-Path $PSScriptRoot "requirements.txt"
-    if (-not (Test-Path $requirementsPath)) {
-        throw "No se encontro requirements.txt en la raiz del proyecto"
-    }
-
-    Write-Step "Instalando dependencias Python del proyecto..."
-    & $venvPython -m pip install --upgrade pip
-    & $venvPython -m pip install --upgrade setuptools wheel
-    & $venvPython -m pip install -r $requirementsPath
-
-    # Streamlit es obligatorio para arrancar la UI, se fuerza para escenarios desde cero.
     Write-Step "Comprobando instalacion de Streamlit..."
-    & $venvPython -m pip install --upgrade streamlit
-    & $venvPython -m streamlit --version | Out-Host
+    Invoke-External -FilePath $venvPython -Arguments @("-m", "streamlit", "--version")
 
     Write-Step "Instalando Chromium para Playwright..."
-    & $venvPython -m playwright install chromium
+    Invoke-External -FilePath $venvPython -Arguments @("-m", "playwright", "install", "chromium")
 
     Write-Step "Instalando/actualizando wafw00f..."
-    & $venvPython -m pip install wafw00f
+    Invoke-External -FilePath $venvPython -Arguments @("-m", "pip", "install", "--upgrade", "wafw00f")
 
     Write-Ok "Dependencias Python listas"
 }
 
-function Ensure-ProjectFolders {
-    Write-Step "Comprobando carpetas de trabajo..."
-    New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot "storage") -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot "reports\output") -Force | Out-Null
-    Write-Ok "Carpetas listas"
+function Ensure-ProjectDiscoveryTools {
+    Write-Step "Comprobando/instalando binarios ProjectDiscovery..."
+
+    Install-GitHubReleaseTool `
+        -Owner "projectdiscovery" `
+        -Repo "httpx" `
+        -ToolCommand "httpx" `
+        -ExeName "httpx.exe" `
+        -AssetPatterns @("httpx_.*windows_amd64\.zip$", "httpx_.*windows.*amd64.*\.zip$")
+
+    Install-GitHubReleaseTool `
+        -Owner "projectdiscovery" `
+        -Repo "nuclei" `
+        -ToolCommand "nuclei" `
+        -ExeName "nuclei.exe" `
+        -AssetPatterns @("nuclei_.*windows_amd64\.zip$", "nuclei_.*windows.*amd64.*\.zip$")
+
+    Install-GitHubReleaseTool `
+        -Owner "projectdiscovery" `
+        -Repo "katana" `
+        -ToolCommand "katana" `
+        -ExeName "katana.exe" `
+        -AssetPatterns @("katana_.*windows_amd64\.zip$", "katana_.*windows.*amd64.*\.zip$")
+
+    Remove-Item -Recurse -Force $Script:TempDir -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $Script:TempDir | Out-Null
+    Write-Ok "Binarios ProjectDiscovery listos"
+}
+
+function Ensure-NucleiTemplates {
+    Write-Step "Actualizando templates de Nuclei..."
+
+    $nuclei = Get-Command "nuclei" -ErrorAction SilentlyContinue
+    if (-not $nuclei) {
+        $localNuclei = Join-Path $Script:BinDir "nuclei.exe"
+        if (Test-Path $localNuclei) { $nuclei = @{ Source = $localNuclei } }
+    }
+
+    if (-not $nuclei) {
+        Write-Warn "Nuclei no disponible; no se pueden actualizar templates"
+        return
+    }
+
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $nuclei.Source
+        $psi.Arguments = "-update-templates"
+        $psi.WorkingDirectory = $Script:RootDir
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+
+        $timeoutMs = 180000
+        if (-not $proc.WaitForExit($timeoutMs)) {
+            try { $proc.Kill() } catch { }
+            Write-Warn "La actualizacion de templates excedio 180 segundos. Se continuara sin bloquear el setup."
+            return
+        }
+
+        $stdout = $proc.StandardOutput.ReadToEnd()
+        $stderr = $proc.StandardError.ReadToEnd()
+
+        if ($stdout) { Write-Host $stdout }
+        if ($stderr) { Write-Host $stderr -ForegroundColor DarkGray }
+
+        if ($proc.ExitCode -eq 0) {
+            Write-Ok "Templates de Nuclei actualizados"
+        }
+        else {
+            Write-Warn "Nuclei devolvio codigo $($proc.ExitCode). El setup continuara."
+        }
+    }
+    catch {
+        Write-Warn "No se pudieron actualizar templates de Nuclei: $($_.Exception.Message)"
+    }
+}
+
+function Ensure-Nmap {
+    Write-Step "Comprobando Nmap..."
+
+    $candidateDirs = @(
+        "$env:ProgramFiles\Nmap",
+        "${env:ProgramFiles(x86)}\Nmap"
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    foreach ($dir in $candidateDirs) {
+        Add-PathIfMissing $dir
+    }
+
+    if (Test-Command "nmap") {
+        Write-Ok "Nmap ya instalado"
+        return
+    }
+
+    if (-not (Test-Command "winget")) {
+        Write-Warn "Nmap no detectado y winget no esta disponible. Instala Nmap manualmente si necesitas escaneos avanzados."
+        return
+    }
+
+    Write-Step "Nmap no detectado. Instalando con winget..."
+    $code = Invoke-External -FilePath "winget" -Arguments @("install", "-e", "--id", "Insecure.Nmap", "--accept-source-agreements", "--accept-package-agreements") -IgnoreExitCode
+
+    foreach ($dir in $candidateDirs) {
+        Add-PathIfMissing $dir
+    }
+
+    if (Test-Command "nmap") {
+        Write-Ok "Nmap instalado"
+        return
+    }
+
+    foreach ($dir in $candidateDirs) {
+        $exe = Join-Path $dir "nmap.exe"
+        if (Test-Path $exe) {
+            Add-PathIfMissing $dir
+            Add-UserPathIfMissing $dir
+            Write-Ok "Nmap instalado en $dir"
+            return
+        }
+    }
+
+    if ($code -eq 0) {
+        Write-Warn "Winget indica que Nmap esta instalado, pero nmap.exe no es visible en esta sesion. Abre una nueva consola si la app no lo detecta."
+    }
+    else {
+        Write-Warn "No se pudo instalar Nmap automaticamente. Codigo winget: $code"
+    }
+}
+
+function Ensure-FFUF {
+    Install-GitHubReleaseTool `
+        -Owner "ffuf" `
+        -Repo "ffuf" `
+        -ToolCommand "ffuf" `
+        -ExeName "ffuf.exe" `
+        -AssetPatterns @("ffuf_.*windows_amd64\.zip$", "ffuf_.*windows.*amd64.*\.zip$")
+}
+
+function Ensure-Feroxbuster {
+    Install-GitHubReleaseTool `
+        -Owner "epi052" `
+        -Repo "feroxbuster" `
+        -ToolCommand "feroxbuster" `
+        -ExeName "feroxbuster.exe" `
+        -AssetPatterns @(".*x86_64.*windows.*\.zip$", ".*windows.*x86_64.*\.zip$", ".*windows.*amd64.*\.zip$", "feroxbuster.*windows.*\.zip$")
+}
+
+function Ensure-Sqlmap {
+    Write-Step "Comprobando sqlmap..."
+
+    $shim = Join-Path $Script:BinDir "sqlmap.cmd"
+    if ((Test-Path $shim) -or (Test-Command "sqlmap")) {
+        Write-Ok "sqlmap ya estaba instalado"
+        return
+    }
+
+    $pythonCmd = Get-PythonCommand
+    if (-not $pythonCmd) {
+        Write-Warn "Python no disponible; no se puede instalar sqlmap"
+        return
+    }
+
+    $zipPath = Join-Path $Script:TempDir "sqlmap-master.zip"
+    $extractPath = Join-Path $Script:TempDir "sqlmap-extracted"
+    Download-File -Url "https://github.com/sqlmapproject/sqlmap/archive/refs/heads/master.zip" -OutFile $zipPath
+    Expand-ZipSafe -ZipPath $zipPath -Destination $extractPath
+
+    $sourceDir = Get-ChildItem -Path $extractPath -Directory | Where-Object { $_.Name -like "sqlmap*" } | Select-Object -First 1
+    if (-not $sourceDir) {
+        throw "No se encontro la carpeta de sqlmap dentro del zip descargado"
+    }
+
+    if (Test-Path $Script:SqlmapDir) { Remove-Item -Recurse -Force $Script:SqlmapDir }
+    Copy-Item -Path $sourceDir.FullName -Destination $Script:SqlmapDir -Recurse -Force
+
+    $sqlmapPy = Join-Path $Script:SqlmapDir "sqlmap.py"
+    if (-not (Test-Path $sqlmapPy)) {
+        throw "Instalacion incompleta de sqlmap: no existe sqlmap.py"
+    }
+
+    $cmdContent = @"
+@echo off
+setlocal
+set SQLMAP_HOME=%~dp0..\sqlmap
+python "%SQLMAP_HOME%\sqlmap.py" %*
+"@
+    Set-Content -Path $shim -Value $cmdContent -Encoding ASCII
+
+    Write-Ok "sqlmap instalado en .tools\sqlmap"
 }
 
 function Ensure-ExtraTools {
     Write-Step "Comprobando herramientas extra recomendadas..."
     Ensure-Nmap
-    Install-OptionalScoopTool -ToolName "ffuf"
-    Install-OptionalScoopTool -ToolName "feroxbuster"
-    Install-OptionalScoopTool -ToolName "sqlmap"
+    Ensure-FFUF
+    Ensure-Feroxbuster
+    Ensure-Sqlmap
+    Add-UserPathIfMissing $Script:BinDir
+}
+
+function Ensure-ProjectFolders {
+    Write-Step "Comprobando carpetas de trabajo..."
+    $folders = @(
+        "reports",
+        "outputs",
+        "word_reports",
+        "screenshots",
+        "data",
+        "logs",
+        ".tools"
+    )
+
+    foreach ($folder in $folders) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $Script:RootDir $folder) | Out-Null
+    }
+
+    Write-Ok "Carpetas listas"
+}
+
+function Test-ToolAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [string[]]$ExtraPaths = @()
+    )
+
+    if (Test-Command $Command) { return $true }
+
+    foreach ($path in $ExtraPaths) {
+        if (Test-Path $path) { return $true }
+    }
+
+    return $false
 }
 
 function Run-EnvironmentCheck {
     Write-Step "Estado actual del entorno"
+
+    Add-PathIfMissing $Script:BinDir
+    Add-PathIfMissing "$env:ProgramFiles\Nmap"
+    Add-PathIfMissing "${env:ProgramFiles(x86)}\Nmap"
+
+    $venvPython = Join-Path $Script:RootDir ".venv\Scripts\python.exe"
+    $streamlit = Join-Path $Script:RootDir ".venv\Scripts\streamlit.exe"
+
     $checks = @(
-        @{ Name = "scoop"; Label = "Scoop" },
-        @{ Name = "python"; Label = "Python" },
-        @{ Name = "py"; Label = "Python launcher (py)" },
-        @{ Name = "httpx"; Label = "HTTPX" },
-        @{ Name = "nuclei"; Label = "Nuclei" },
-        @{ Name = "katana"; Label = "Katana" },
-        @{ Name = "nmap"; Label = "Nmap" },
-        @{ Name = "ffuf"; Label = "ffuf" },
-        @{ Name = "feroxbuster"; Label = "feroxbuster" },
-        @{ Name = "sqlmap"; Label = "sqlmap" }
+        @{ Label = "Python"; Ok = [bool](Get-PythonCommand) },
+        @{ Label = "Python launcher (py)"; Ok = (Test-Command "py") },
+        @{ Label = "HTTPX"; Ok = (Test-ToolAvailable "httpx" @((Join-Path $Script:BinDir "httpx.exe"))) },
+        @{ Label = "Nuclei"; Ok = (Test-ToolAvailable "nuclei" @((Join-Path $Script:BinDir "nuclei.exe"))) },
+        @{ Label = "Katana"; Ok = (Test-ToolAvailable "katana" @((Join-Path $Script:BinDir "katana.exe"))) },
+        @{ Label = "Nmap"; Ok = (Test-ToolAvailable "nmap" @("$env:ProgramFiles\Nmap\nmap.exe", "${env:ProgramFiles(x86)}\Nmap\nmap.exe")) },
+        @{ Label = "ffuf"; Ok = (Test-ToolAvailable "ffuf" @((Join-Path $Script:BinDir "ffuf.exe"))) },
+        @{ Label = "feroxbuster"; Ok = (Test-ToolAvailable "feroxbuster" @((Join-Path $Script:BinDir "feroxbuster.exe"))) },
+        @{ Label = "sqlmap"; Ok = (Test-ToolAvailable "sqlmap" @((Join-Path $Script:BinDir "sqlmap.cmd"))) },
+        @{ Label = ".venv"; Ok = (Test-Path $venvPython) },
+        @{ Label = "Streamlit (.venv)"; Ok = (Test-Path $streamlit) }
     )
 
-    foreach ($item in $checks) {
-        if (Test-Command $item.Name) {
-            Write-Ok ("{0}: instalado" -f $item.Label)
+    foreach ($check in $checks) {
+        if ($check.Ok) {
+            Write-Ok "$($check.Label): instalado/listo"
         }
         else {
-            Write-Warn ("{0}: no instalado" -f $item.Label)
+            Write-Warn "$($check.Label): no instalado"
         }
-    }
-
-    $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-    if (Test-Path $venvPython) {
-        Write-Ok ".venv: disponible"
-
-        $venvPipOk = $false
-        $venvPipDetail = $null
-        try {
-            $venvPipOutput = & $venvPython -m pip --version 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $venvPipOk = $true
-            }
-            elseif ($venvPipOutput) {
-                $venvPipDetail = (($venvPipOutput -join " ").Trim())
-            }
-        }
-        catch {
-            $venvPipDetail = $_.Exception.Message
-        }
-
-        if (-not $venvPipOk) {
-            Write-Warn ".venv: incompleto (pip no disponible)"
-            if ($venvPipDetail) {
-                Write-Warn ("Detalle: {0}" -f $venvPipDetail)
-            }
-            Write-Warn "Ejecuta opcion 1 para recrear e instalar todo el entorno"
-            return
-        }
-
-        # External commands do not always throw in PowerShell on non-zero exit.
-        # Validate both output and exit code to avoid false positives.
-        $streamlitOk = $false
-        $streamlitDetail = $null
-
-        try {
-            $streamlitOutput = & $venvPython -m streamlit --version 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $streamlitOk = $true
-            }
-            elseif ($streamlitOutput) {
-                $streamlitDetail = (($streamlitOutput -join " ").Trim())
-            }
-        }
-        catch {
-            $streamlitDetail = $_.Exception.Message
-        }
-
-        if ($streamlitOk) {
-            Write-Ok "Streamlit (.venv): listo"
-        }
-        else {
-            Write-Warn "Streamlit (.venv): no disponible"
-            if ($streamlitDetail) {
-                Write-Warn ("Detalle: {0}" -f $streamlitDetail)
-            }
-        }
-    }
-    else {
-        Write-Warn ".venv: no encontrado"
     }
 }
 
 function Run-CompleteSetup {
-    Ensure-ExecutionPolicy
-    Ensure-Scoop
-    Ensure-ProjectDiscoveryTools
-    $pythonCmd = Ensure-Python
-    Ensure-PythonProject -PythonCmd $pythonCmd
-    Ensure-ExtraTools
-    Ensure-ProjectFolders
-    Run-EnvironmentCheck
+    try {
+        Initialize-ToolFolders
+        Ensure-ExecutionPolicy
+        $pythonCmd = Ensure-Python
+        Ensure-PythonProject -PythonCmd $pythonCmd
+        Ensure-ProjectDiscoveryTools
+        Ensure-NucleiTemplates
+        Ensure-ExtraTools
+        Ensure-ProjectFolders
+        Run-EnvironmentCheck
 
-    Write-Host "`n============================================================" -ForegroundColor DarkGreen
-    Write-Host " Setup completado." -ForegroundColor DarkGreen
-    Write-Host " Para ejecutar la herramienta:" -ForegroundColor DarkGreen
-    Write-Host "   .\.venv\Scripts\Activate.ps1" -ForegroundColor DarkGreen
-    Write-Host "   streamlit run app.py" -ForegroundColor DarkGreen
-    Write-Host "============================================================" -ForegroundColor DarkGreen
+        Write-Host ""
+        Write-Host "============================================================" -ForegroundColor White
+        Write-Host " Setup completado." -ForegroundColor White
+        Write-Host " Para ejecutar la herramienta:" -ForegroundColor White
+        Write-Host "   .\.venv\Scripts\Activate.ps1" -ForegroundColor White
+        Write-Host "   streamlit run app.py" -ForegroundColor White
+        Write-Host " Si PowerShell bloquea Activate.ps1, usa:" -ForegroundColor White
+        Write-Host "   .\.venv\Scripts\activate.bat" -ForegroundColor White
+        Write-Host "   streamlit run app.py" -ForegroundColor White
+        Write-Host "============================================================" -ForegroundColor White
+    }
+    catch {
+        Write-Fail "Fallo durante el setup"
+        Write-Fail $_.Exception.Message
+        exit 1
+    }
 }
+
+Set-Location $Script:RootDir
+Initialize-ToolFolders
 
 Show-Banner
 Show-Menu
 $choice = Read-Host "Selecciona una opcion"
 
-try {
-    switch ($choice) {
-        "1" {
-            Run-CompleteSetup
-        }
-        "2" {
-            Ensure-ExecutionPolicy
-            Ensure-Scoop
-            Run-EnvironmentCheck
-        }
-        "3" {
-            Write-Host "Saliendo..." -ForegroundColor DarkGray
-        }
-        default {
-            Write-Warn "Opcion no valida. Ejecuta de nuevo y elige 1, 2 o 3."
-        }
+switch ($choice) {
+    "1" { Run-CompleteSetup }
+    "2" { Run-EnvironmentCheck }
+    "3" { Write-Ok "Saliendo"; exit 0 }
+    default {
+        Write-Warn "Opcion no valida"
+        exit 1
     }
 }
-catch {
-    Write-Fail "Fallo durante el setup"
-    Write-Fail $_.Exception.Message
-    exit 1
-}
-
-
