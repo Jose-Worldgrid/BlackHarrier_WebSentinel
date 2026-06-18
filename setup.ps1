@@ -87,6 +87,23 @@ function Test-Command {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Get-DotEnvValue {
+    param(
+        [string]$Path,
+        [string]$Key
+    )
+
+    if (-not (Test-Path $Path)) { return "" }
+    $prefix = "$Key="
+    foreach ($line in Get-Content $Path -ErrorAction SilentlyContinue) {
+        $text = [string]$line
+        if ($text.StartsWith($prefix)) {
+            return $text.Substring($prefix.Length).Trim().Trim('"').Trim("'")
+        }
+    }
+    return ""
+}
+
 function Add-PathIfMissing {
     param([string]$Candidate)
     if ([string]::IsNullOrWhiteSpace($Candidate)) { return }
@@ -364,6 +381,50 @@ function Ensure-PythonProject {
         Invoke-External -FilePath $venvPython -Arguments @("-m", "pip", "install", "streamlit", "requests", "beautifulsoup4", "playwright", "python-docx", "pandas", "dnspython", "pytest", "lxml")
     }
 
+    # A veces existe .venv pero incompleto (sin pip). En ese caso se recrea.
+    $pipReady = $false
+    try {
+        & $venvPython -m pip --version | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $pipReady = $true
+        }
+    }
+    catch {
+        $pipReady = $false
+    }
+
+    if (-not $pipReady) {
+        Write-Warn ".venv detectado pero incompleto (pip no disponible). Recreando entorno..."
+        if (Test-Path $venvPath) {
+            Remove-Item -Path $venvPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($PythonCmd -eq "py") {
+            py -3 -m venv $venvPath
+        }
+        else {
+            python -m venv $venvPath
+        }
+
+        if (-not (Test-Path $venvPython)) {
+            throw "No se pudo recrear .venv"
+        }
+
+        & $venvPython -m ensurepip --upgrade | Out-Null
+    }
+
+    $requirementsPath = Join-Path $PSScriptRoot "requirements.txt"
+    if (-not (Test-Path $requirementsPath)) {
+        throw "No se encontro requirements.txt en la raiz del proyecto"
+    }
+
+    Write-Step "Instalando dependencias Python del proyecto..."
+    & $venvPython -m pip install --upgrade pip
+    & $venvPython -m pip install --upgrade setuptools wheel
+    & $venvPython -m pip install -r $requirementsPath
+    & $venvPython -m pip install --upgrade openai python-dotenv
+
+    # Streamlit es obligatorio para arrancar la UI, se fuerza para escenarios desde cero.
     Write-Step "Comprobando instalacion de Streamlit..."
     Invoke-External -FilePath $venvPython -Arguments @("-m", "streamlit", "--version")
 
@@ -644,6 +705,107 @@ function Run-EnvironmentCheck {
         }
         else {
             Write-Warn "$($check.Label): no instalado"
+        }
+    }
+
+    $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+        Write-Ok ".venv: disponible"
+
+        $venvPipOk = $false
+        $venvPipDetail = $null
+        try {
+            $venvPipOutput = & $venvPython -m pip --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $venvPipOk = $true
+            }
+            elseif ($venvPipOutput) {
+                $venvPipDetail = (($venvPipOutput -join " ").Trim())
+            }
+        }
+        catch {
+            $venvPipDetail = $_.Exception.Message
+        }
+
+        if (-not $venvPipOk) {
+            Write-Warn ".venv: incompleto (pip no disponible)"
+            if ($venvPipDetail) {
+                Write-Warn ("Detalle: {0}" -f $venvPipDetail)
+            }
+            Write-Warn "Ejecuta opcion 1 para recrear e instalar todo el entorno"
+            return
+        }
+
+        # External commands do not always throw in PowerShell on non-zero exit.
+        # Validate both output and exit code to avoid false positives.
+        $streamlitOk = $false
+        $streamlitDetail = $null
+
+        try {
+            $streamlitOutput = & $venvPython -m streamlit --version 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $streamlitOk = $true
+            }
+            elseif ($streamlitOutput) {
+                $streamlitDetail = (($streamlitOutput -join " ").Trim())
+            }
+        }
+        catch {
+            $streamlitDetail = $_.Exception.Message
+        }
+
+        if ($streamlitOk) {
+            Write-Ok "Streamlit (.venv): listo"
+        }
+        else {
+            Write-Warn "Streamlit (.venv): no disponible"
+            if ($streamlitDetail) {
+                Write-Warn ("Detalle: {0}" -f $streamlitDetail)
+            }
+        }
+
+        Write-Step "Comprobando dependencias IA en .venv..."
+        $deps = @("openai", "python-dotenv")
+        foreach ($dep in $deps) {
+            try {
+                & $venvPython -m pip show $dep | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok ("Dependencia Python: {0}" -f $dep)
+                }
+                else {
+                    Write-Warn ("Dependencia Python no detectada: {0}" -f $dep)
+                }
+            }
+            catch {
+                Write-Warn ("No se pudo verificar dependencia {0}: {1}" -f $dep, $_.Exception.Message)
+            }
+        }
+    }
+    else {
+        Write-Warn ".venv: no encontrado"
+    }
+
+    Write-Step "Comprobando configuracion Azure OpenAI (.env / entorno)..."
+    $dotenvPath = Join-Path $PSScriptRoot ".env"
+    $endpoint = [Environment]::GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT", "Process")
+    if (-not $endpoint) { $endpoint = [Environment]::GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT", "User") }
+    if (-not $endpoint) { $endpoint = Get-DotEnvValue -Path $dotenvPath -Key "AZURE_OPENAI_ENDPOINT" }
+
+    $apiKey = [Environment]::GetEnvironmentVariable("AZURE_OPENAI_API_KEY", "Process")
+    if (-not $apiKey) { $apiKey = [Environment]::GetEnvironmentVariable("AZURE_OPENAI_API_KEY", "User") }
+    if (-not $apiKey) { $apiKey = Get-DotEnvValue -Path $dotenvPath -Key "AZURE_OPENAI_API_KEY" }
+
+    $deployment = [Environment]::GetEnvironmentVariable("AZURE_OPENAI_MINI_DEPLOYMENT", "Process")
+    if (-not $deployment) { $deployment = [Environment]::GetEnvironmentVariable("AZURE_OPENAI_MINI_DEPLOYMENT", "User") }
+    if (-not $deployment) { $deployment = Get-DotEnvValue -Path $dotenvPath -Key "AZURE_OPENAI_MINI_DEPLOYMENT" }
+
+    if ($endpoint -and $apiKey -and $deployment) {
+        Write-Ok "Azure OpenAI: configuracion detectada"
+    }
+    else {
+        Write-Warn "Azure OpenAI incompleto: faltan AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY o AZURE_OPENAI_MINI_DEPLOYMENT"
+        if (-not (Test-Path $dotenvPath)) {
+            Write-Warn "No existe .env en la raiz del proyecto. Copia .env.example a .env y completa valores."
         }
     }
 }

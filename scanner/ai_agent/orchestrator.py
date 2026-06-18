@@ -10,11 +10,13 @@ import json
 import logging
 from typing import Dict, List, Any, Callable, Optional
 from datetime import datetime
+from urllib.parse import urlparse
 
 from scanner.ai_agent.executor import AdaptiveExecutor, ExecutionLog
 from scanner.ai_agent.analyzer import FailureAnalyzer
 from scanner.ai_agent.generator import DynamicPayloadGenerator
 from scanner.ai_agent.scoring import KnowledgeBase, ScoringEngine
+from scanner.ai_agent.providers import call_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +306,381 @@ class AdaptiveOrchestrator:
             f"Recorded learnings for {target_url}: "
             f"{len(frameworks)} frameworks, {len(waf_types)} WAF types"
         )
+
+    @staticmethod
+    def _safe_lower(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _extract_host(url: str) -> str:
+        try:
+            return str(urlparse(str(url or "")).hostname or "").lower()
+        except Exception:
+            return ""
+
+    def _extract_framework_and_waf_signals(
+        self,
+        pages: List[Dict[str, Any]],
+        phase1_results: List[Dict[str, Any]],
+    ) -> Dict[str, List[str]]:
+        frameworks = set()
+        waf_types = set()
+
+        for page in pages or []:
+            ai_context = page.get("ai_context") or {}
+            framework = self._safe_lower(
+                ai_context.get("framework")
+                or ai_context.get("detected_framework")
+                or page.get("framework")
+            )
+            if framework and framework not in {"unknown", "none"}:
+                frameworks.add(framework)
+
+        for row in phase1_results or []:
+            blob = " ".join(
+                [
+                    str(row.get("Módulo") or row.get("module") or ""),
+                    str(row.get("Descripción") or row.get("description") or ""),
+                    str(row.get("Evidencia") or row.get("evidence") or ""),
+                ]
+            ).lower()
+            for token in ["react", "next.js", "nextjs", "angular", "vue", "django", "flask", "laravel"]:
+                if token in blob:
+                    frameworks.add(token.replace("next.js", "nextjs"))
+            for waf in ["cloudflare", "akamai", "modsecurity", "imperva", "f5", "aws waf"]:
+                if waf in blob:
+                    waf_types.add(waf)
+
+        return {
+            "frameworks": sorted(frameworks),
+            "waf_types": sorted(waf_types),
+        }
+
+    def _collect_attack_surface(
+        self,
+        target_url: str,
+        pages: List[Dict[str, Any]],
+        discovery: Dict[str, Any],
+        phase_state: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        target_host = self._extract_host(target_url)
+        candidate_endpoints = []
+        seen = set()
+
+        def _push(url_value: str, source: str):
+            text = str(url_value or "").strip()
+            if not text.startswith(("http://", "https://", "/")):
+                return
+            if text.startswith("/"):
+                base = str(target_url or "").rstrip("/")
+                text = f"{base}{text}"
+            host = self._extract_host(text)
+            if target_host and host and host != target_host:
+                return
+            key = text.rstrip("/").lower()
+            if key in seen:
+                return
+            seen.add(key)
+            candidate_endpoints.append({"url": text, "source": source})
+
+        for page in pages or []:
+            page_url = str(page.get("final_url") or page.get("url") or "")
+            if page_url:
+                _push(page_url, "page")
+
+            ai_context = page.get("ai_context") or {}
+            for endpoint in ai_context.get("candidate_endpoints") or []:
+                _push(endpoint, "ai_context")
+
+            runtime = page.get("browser_runtime") or {}
+            for endpoint in runtime.get("candidate_endpoints") or []:
+                _push(endpoint, "browser_runtime")
+
+            for form in page.get("forms") or []:
+                _push(form.get("action") or "", "form_action")
+
+        for entry in (discovery or {}).get("discovered") or []:
+            if isinstance(entry, dict):
+                _push(
+                    entry.get("final_url")
+                    or entry.get("requested_url")
+                    or entry.get("url")
+                    or "",
+                    "discovery",
+                )
+            else:
+                _push(entry, "discovery")
+
+        for event in phase_state.get("post_login_http_events") or []:
+            _push(event.get("final_url") or event.get("url") or "", "auth_event")
+
+        return {
+            "target_host": target_host,
+            "candidate_endpoints": candidate_endpoints[:250],
+            "has_auth_session": bool(phase_state.get("auth_cookies") or {}),
+            "auth_status": str(phase_state.get("auth_status") or "No configurado"),
+            "database_assets": phase_state.get("database_assets") or [],
+            "nmap_hosts": (phase_state.get("nmap_structured") or {}).get("hosts") or [],
+            "nessus_vulns": (phase_state.get("nessus_structured") or {}).get("vulnerabilities") or [],
+            "external_pipeline": phase_state.get("external_pipeline") or {},
+            "all_cves_found": phase_state.get("all_cves_found") or [],
+        }
+
+    def _identify_false_positive_candidates(
+        self,
+        phase1_results: List[Dict[str, Any]],
+        strict_fp_mode: bool,
+    ) -> List[Dict[str, Any]]:
+        markers_weak = [
+            "no evidenciado",
+            "sin evidencia",
+            "placeholder",
+            "unknown",
+            "posible",
+            "heur",
+            "estimad",
+        ]
+        markers_strong = [
+            "confirm",
+            "comprobado",
+            "request",
+            "response",
+            "status",
+            "endpoint",
+            "selector",
+            "cookie",
+            "payload",
+        ]
+
+        suspects = []
+        for row in phase1_results or []:
+            status = self._safe_lower(row.get("Resultado") or row.get("status"))
+            if status not in {"posible hallazgo", "hallazgo", "comprobado"}:
+                continue
+
+            module_name = str(row.get("Módulo") or row.get("module") or "desconocido")
+            desc = str(row.get("Descripción") or row.get("description") or "")
+            ev = str(row.get("Evidencia") or row.get("evidence") or "")
+            blob = f"{desc} {ev}".lower()
+
+            weak_hits = sum(1 for marker in markers_weak if marker in blob)
+            strong_hits = sum(1 for marker in markers_strong if marker in blob)
+            confidence = max(0.0, min(0.99, 0.45 + (strong_hits * 0.1) - (weak_hits * 0.12)))
+
+            if strict_fp_mode and status == "posible hallazgo" and confidence < 0.55:
+                suspects.append(
+                    {
+                        "module": module_name,
+                        "status": status,
+                        "reason": "Posible hallazgo con baja evidencia técnica verificable.",
+                        "confidence": round(confidence, 3),
+                    }
+                )
+
+        return suspects[:40]
+
+    def _base_payload_for_attack(self, attack_type: str) -> str:
+        templates = {
+            "xss": "<img src=x onerror=alert(1)>",
+            "sqli": "' OR '1'='1'--",
+            "auth_sqli": "' OR '1'='1'--",
+            "ssti": "{{7*7}}",
+            "ssrf": "http://127.0.0.1:80",
+            "path_traversal": "../../../../etc/passwd",
+            "open_redirect": "https://example.org",
+            "idor": "id=1",
+            "jwt": "alg=none",
+        }
+        return templates.get(attack_type, "test-payload")
+
+    def _default_vector_catalog(self) -> List[Dict[str, str]]:
+        return [
+            {"attack_type": "xss", "module": "XSS reflejado"},
+            {"attack_type": "sqli", "module": "SQL Injection"},
+            {"attack_type": "auth_sqli", "module": "SQL Injection Auth (Browser)"},
+            {"attack_type": "ssti", "module": "SSTI"},
+            {"attack_type": "ssrf", "module": "SSRF"},
+            {"attack_type": "path_traversal", "module": "Path Traversal"},
+            {"attack_type": "open_redirect", "module": "Open Redirect"},
+            {"attack_type": "idor", "module": "Control de acceso"},
+            {"attack_type": "jwt", "module": "JWT"},
+        ]
+
+    def build_phase2_attack_strategy(
+        self,
+        target_url: str,
+        pages: List[Dict[str, Any]],
+        discovery: Dict[str, Any],
+        phase1_results: List[Dict[str, Any]],
+        phase_state: Optional[Dict[str, Any]] = None,
+        strict_fp_mode: bool = True,
+        max_vectors: int = 30,
+        llm_provider: str = "azure_openai",
+    ) -> Dict[str, Any]:
+        """
+        Build an evidence-based attack strategy from full phase-1 context.
+        The plan keeps audit-local evidence as source of truth and uses historical
+        knowledge only as a soft prioritization hint.
+        """
+        phase_state = phase_state or {}
+        phase1_results = phase1_results or []
+        pages = pages or []
+        discovery = discovery or {}
+
+        signals = self._extract_framework_and_waf_signals(pages, phase1_results)
+        attack_surface = self._collect_attack_surface(target_url, pages, discovery, phase_state)
+        fp_candidates = self._identify_false_positive_candidates(phase1_results, strict_fp_mode)
+
+        audit_host = self._extract_host(target_url)
+        environment_profile = self.knowledge_base.get_environment_profile(target_url)
+        global_attack_stats = self.knowledge_base.knowledge.get("attack_effectiveness") or {}
+
+        vectors = []
+        module_scores = {}
+        endpoints = attack_surface.get("candidate_endpoints") or []
+
+        preferred_framework = (signals.get("frameworks") or ["unknown"])[0]
+        waf_types = signals.get("waf_types") or []
+
+        fp_modules = {
+            str(item.get("module") or "").strip(): float(item.get("confidence", 0.0) or 0.0)
+            for item in fp_candidates
+        }
+
+        for vector_spec in self._default_vector_catalog():
+            attack_type = vector_spec["attack_type"]
+            module_name = vector_spec["module"]
+            base_payload = self._base_payload_for_attack(attack_type)
+            payload_variants = self.generator.generate_variants(
+                attack_type="sqli" if attack_type == "auth_sqli" else attack_type,
+                base_payload=base_payload,
+                framework=preferred_framework,
+                detected_filters=waf_types,
+                previous_failures=[],
+            )[:6]
+
+            base_score = self.scoring_engine.score_payload(
+                attack_type=attack_type,
+                payload=base_payload,
+                framework=preferred_framework,
+                waf_types=waf_types,
+            )
+
+            local_evidence_boost = 0.0
+            if any(module_name.lower() in str(item.get("Módulo") or "").lower() for item in phase1_results):
+                local_evidence_boost += 0.18
+            if attack_surface.get("has_auth_session") and attack_type in {"auth_sqli", "idor", "jwt"}:
+                local_evidence_boost += 0.25
+            if attack_surface.get("database_assets") and attack_type in {"sqli", "auth_sqli"}:
+                local_evidence_boost += 0.22
+            if attack_type in {"ssrf", "path_traversal"} and attack_surface.get("nmap_hosts"):
+                local_evidence_boost += 0.14
+
+            fp_penalty = 0.0
+            if module_name in fp_modules:
+                fp_penalty = (1.0 - fp_modules[module_name]) * 0.35
+
+            historical_hint = 0.0
+            framework_stats = global_attack_stats.get(preferred_framework) or {}
+            if attack_type in framework_stats:
+                attempts = int((framework_stats.get(attack_type) or {}).get("attempts", 0) or 0)
+                successes = int((framework_stats.get(attack_type) or {}).get("successes", 0) or 0)
+                if attempts > 0:
+                    historical_hint = min(0.18, (successes / attempts) * 0.2)
+
+            final_score = max(0.0, min(0.99, base_score + local_evidence_boost + historical_hint - fp_penalty))
+            module_scores[module_name] = round(final_score, 3)
+
+            evidence_endpoints = [entry.get("url") for entry in endpoints[:8]]
+            vectors.append(
+                {
+                    "attack_type": attack_type,
+                    "module": module_name,
+                    "target_host": audit_host,
+                    "priority_score": round(final_score, 3),
+                    "justification": (
+                        "Priorizado por evidencia local de fase 1 (fuente principal), "
+                        "señales de framework/WAF y control de falsos positivos."
+                    ),
+                    "evidence_endpoints": evidence_endpoints,
+                    "candidate_payloads": [
+                        {
+                            "variant": variant.get("variant"),
+                            "payload": str(variant.get("payload") or "")[:180],
+                            "reason": variant.get("reason"),
+                        }
+                        for variant in payload_variants
+                    ],
+                }
+            )
+
+        vectors.sort(key=lambda item: item.get("priority_score", 0.0), reverse=True)
+        vectors = vectors[: max(5, int(max_vectors or 30))]
+
+        ranked_modules = [
+            {"module": module, "score": score}
+            for module, score in sorted(module_scores.items(), key=lambda item: item[1], reverse=True)
+        ]
+
+        strategy = {
+            "target_url": target_url,
+            "target_host": audit_host,
+            "generated_at": datetime.now().isoformat(),
+            "audit_scope_policy": {
+                "local_audit_evidence_is_primary": True,
+                "cross_audit_learning_used_as_hint_only": True,
+                "cross_audit_warning": (
+                    "Cada auditoría es independiente: una técnica efectiva en un objetivo "
+                    "anterior no se asume efectiva en el objetivo actual sin evidencia local."
+                ),
+            },
+            "signals": signals,
+            "attack_surface_summary": {
+                "candidate_endpoints": len(attack_surface.get("candidate_endpoints") or []),
+                "has_auth_session": bool(attack_surface.get("has_auth_session")),
+                "database_assets": len(attack_surface.get("database_assets") or []),
+                "nmap_hosts": len(attack_surface.get("nmap_hosts") or []),
+                "nessus_vulns": len(attack_surface.get("nessus_vulns") or []),
+                "cves": len(attack_surface.get("all_cves_found") or []),
+            },
+            "ranked_modules": ranked_modules,
+            "attack_vectors": vectors,
+            "false_positive_candidates": fp_candidates,
+            "reasoning": {
+                "summary": (
+                    "La estrategia de ataque se construye desde todo el escaneo inicial "
+                    "(surface mapping, resultados técnicos, Nmap/Nessus/CVE y contexto de autenticación), "
+                    "filtrando señales débiles para minimizar falsos positivos."
+                ),
+                "historical_profile_known": bool(environment_profile.get("frameworks") or {}),
+            },
+        }
+
+        try:
+            llm_prompt = {
+                "task": "refine_attack_strategy",
+                "target_url": target_url,
+                "signals": strategy["signals"],
+                "attack_surface_summary": strategy["attack_surface_summary"],
+                "ranked_modules": strategy["ranked_modules"][:8],
+                "attack_vectors_preview": strategy["attack_vectors"][:5],
+                "constraints": {
+                    "authorized_only": True,
+                    "non_destructive_default": True,
+                    "no_invented_findings": True,
+                    "return_json_only": True,
+                },
+            }
+            llm_data = call_llm_json(
+                prompt=json.dumps(llm_prompt, ensure_ascii=False),
+                provider=llm_provider,
+            )
+            if isinstance(llm_data, dict):
+                strategy["llm_refinement"] = llm_data
+        except Exception:
+            strategy["llm_refinement"] = None
+
+        return strategy
 
     def get_adaptation_summary(self) -> Dict[str, Any]:
         """Return summary of learned patterns and effectiveness."""

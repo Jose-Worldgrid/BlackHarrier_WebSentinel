@@ -13,6 +13,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import Inches, Pt, RGBColor
+from reports.nmap_word_integration import add_nmap_section_to_report
 
 
 
@@ -860,6 +861,531 @@ def _extract_url_hint(text: str) -> str:
         return generic.group(1).strip().rstrip("/")
 
     return ""
+
+
+def _extract_literal_url(text: str) -> str:
+    value = safe_text(text)
+
+    tagged = re.search(r"(?:URL|url|Fuente|source|endpoint|ruta)\s*[:=]\s*(https?://[^\s|]+)", value, re.IGNORECASE)
+    if tagged:
+        return tagged.group(1).strip().rstrip("/")
+
+    generic = re.search(r"(https?://[^\s|]+)", value, re.IGNORECASE)
+    if generic:
+        return generic.group(1).strip().rstrip("/")
+
+    return ""
+
+
+def _nmap_open_port_rows(nmap_structured: dict | None) -> list[dict]:
+    rows = []
+    hosts = (nmap_structured or {}).get("hosts") or []
+    for host in hosts:
+        host_value = safe_text(host.get("host") or "").strip()
+        ports = host.get("ports") or []
+        for port_info in ports:
+            state = safe_text(port_info.get("state", "")).lower()
+            if state != "open":
+                continue
+            try:
+                port_value = int(port_info.get("port", 0) or 0)
+            except Exception:
+                port_value = 0
+            if port_value <= 0:
+                continue
+            protocol = safe_text(port_info.get("protocol", "tcp")).strip() or "tcp"
+            service = safe_text(port_info.get("service", "")).strip()
+            product = safe_text(port_info.get("product", "")).strip()
+            rows.append({
+                "host": host_value,
+                "port": port_value,
+                "protocol": protocol,
+                "service": service,
+                "product": product,
+            })
+    return rows
+
+
+def _infer_nmap_location(item: dict, nmap_structured: dict | None) -> str:
+    port_rows = _nmap_open_port_rows(nmap_structured)
+    if not port_rows:
+        return ""
+
+    module = safe_text(item.get("Módulo", "")).lower()
+    control = safe_text(item.get("Control", ""))
+    evidence = safe_text(item.get("Evidencia", ""))
+    description = safe_text(item.get("Descripción", ""))
+    merged = " | ".join([module, control, evidence, description]).lower()
+
+    service_hint = ""
+    service_match = re.search(r"Servicio\s*:\s*([^|\n]+)", evidence, re.IGNORECASE)
+    if service_match:
+        service_hint = service_match.group(1).strip().lower()
+
+    explicit_port = 0
+    port_match = re.search(r"\bPuerto\s*:\s*(\d{1,5})", evidence + " " + description, re.IGNORECASE)
+    if port_match:
+        try:
+            explicit_port = int(port_match.group(1))
+        except Exception:
+            explicit_port = 0
+
+    scored = []
+    for row in port_rows:
+        score = 0
+        service = safe_text(row.get("service", "")).lower()
+        product = safe_text(row.get("product", "")).lower()
+        port_value = int(row.get("port", 0) or 0)
+
+        if explicit_port and port_value == explicit_port:
+            score += 6
+        if re.search(rf"\b{port_value}\b", merged):
+            score += 4
+        if service and service in merged:
+            score += 4
+        if product and product in merged:
+            score += 2
+        if service_hint and (service_hint in service or service_hint in product or service_hint in merged):
+            score += 5
+        if any(k in module for k in ["nmap", "infraestructura", "correlación de vulnerabilidades"]):
+            score += 1
+
+        if score > 0:
+            scored.append((score, row))
+
+    if not scored:
+        return ""
+
+    scored.sort(key=lambda x: (-x[0], safe_text(x[1].get("host", "")), int(x[1].get("port", 0) or 0)))
+    best = scored[0][1]
+    host = safe_text(best.get("host", "")).strip() or "host_desconocido"
+    port = int(best.get("port", 0) or 0)
+    service = safe_text(best.get("service", "")).strip()
+    label = f"{host}:{port}"
+    if service:
+        label += f" ({service})"
+    return label
+
+
+def _extract_location_hint(item: dict, nmap_structured: dict | None = None) -> str:
+    evidence = safe_text(item.get("Evidencia", ""))
+    description = safe_text(item.get("Descripción", ""))
+    control = safe_text(item.get("Control", ""))
+    merged = " | ".join([evidence, description, control])
+
+    url = _extract_literal_url(merged)
+    if url:
+        return url
+
+    target = re.search(r"\bTarget\s*:\s*([^|\n]+)", merged, re.IGNORECASE)
+    if target:
+        return target.group(1).strip()
+
+    host_port = re.search(r"\bHost(?:/IP)?\s*:\s*([^|\n]+)", merged, re.IGNORECASE)
+    port = re.search(r"\bPuerto\s*:\s*([^|\n]+)", merged, re.IGNORECASE)
+    if host_port and port:
+        return f"{host_port.group(1).strip()}:{port.group(1).strip()}"
+
+    ip_port = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3})[: ](\d{1,5}(?:/(?:tcp|udp))?)\b", merged, re.IGNORECASE)
+    if ip_port:
+        return f"{ip_port.group(1)}:{ip_port.group(2)}"
+
+    service_match = re.search(r"Servicio\s*:\s*([^|\n]+)", merged, re.IGNORECASE)
+    if service_match:
+        svc = service_match.group(1).strip()
+        return f"Infraestructura de red del objetivo principal - servicio {svc}"
+
+    return "No especificada"
+
+
+def _extract_payload_hint(text: str) -> str:
+    value = safe_text(text)
+
+    tagged = re.search(r"(?:payload|poc|exploit|vector)\s*[:=]\s*([^\n|]{6,260})", value, re.IGNORECASE)
+    if tagged:
+        return truncate(tagged.group(1).strip(), 180)
+
+    patterns = [
+        r"(<script[^>]*>.*?</script>)",
+        r"('(?:\s*or\s+1=1|\s*union\s+select)[^\n|]{0,120})",
+        r"(\.\./[^\s|]{1,120})",
+        r"(\{\{[^\n]{1,120}\}\})",
+        r"(\$\{[^\n]{1,120}\})",
+        r"((?:;|\|)\s*(?:id|whoami|cat\s+/etc/passwd)[^\n|]{0,120})",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, value, re.IGNORECASE)
+        if m:
+            return truncate(m.group(1).strip(), 180)
+
+    return "No se capturó payload explícito en la evidencia automatizada."
+
+
+def _extract_dom_element_hint(text: str) -> str:
+    value = safe_text(text)
+
+    tagged = re.search(r"(?:selector|xpath|elemento(?:\s+dom)?|dom(?:\s+element)?)\s*[:=]\s*([^|\n]{4,220})", value, re.IGNORECASE)
+    if tagged:
+        return truncate(tagged.group(1).strip(), 180)
+
+    css = re.search(r"([#.][a-zA-Z0-9_-]{1,60}(?:\s+[>#~+]?\s*[a-zA-Z0-9_\-\[\]=\"'\.:]+){0,3})", value)
+    if css:
+        return truncate(css.group(1).strip(), 180)
+
+    input_name = re.search(r"(?:input|campo|param(?:etro)?)\s*(?:name|id)?\s*[:=]\s*([a-zA-Z0-9_\-]{2,80})", value, re.IGNORECASE)
+    if input_name:
+        return f"Campo/parámetro: {input_name.group(1).strip()}"
+
+    query_param = re.search(r"[?&]([a-zA-Z0-9_\-]{2,80})=", value)
+    if query_param:
+        return f"Parámetro URL: {query_param.group(1).strip()}"
+
+    return ""
+
+
+def _tool_family(module_name: str) -> str:
+    m = safe_text(module_name).lower()
+    if any(x in m for x in ["nmap", "nessus", "puertos", "red", "infraestructura"]):
+        return "Infraestructura/Red"
+    if any(x in m for x in ["xss", "sqli", "ssti", "ssrf", "csrf", "redirect", "path traversal"]):
+        return "Ataque Web"
+    if any(x in m for x in ["auth", "autentic", "jwt", "control de acceso", "usuarios"]):
+        return "Identidad/Acceso"
+    if any(x in m for x in ["pipeline externo", "katana", "httpx", "nuclei", "fingerprint"]):
+        return "Herramientas externas"
+    return "Aplicación/Reconocimiento"
+
+
+def add_ai_agent_summary(document, results, findings):
+    """Add professional IA Agent summary section highlighting AI-driven insights."""
+    document.add_heading("1.2 Información del Agente IA - Propuestas y Correlación", 2)
+    
+    ai_modules = [
+        "Correlación IA ofensiva",
+        "Agente IA",
+        "Planificador adaptativo anti-bloqueo",
+    ]
+    
+    ai_results = [r for r in results or [] if any(
+        ai_module.lower() in safe_text(r.get("Módulo", "")).lower() 
+        for ai_module in ai_modules
+    )]
+    
+    if not ai_results:
+        document.add_paragraph(
+            "El agente IA no generó insights estratégicos en esta ejecución "
+            "(módulos desactivados o sin vulnerabilidades candidatas)."
+        )
+        return
+    
+    # Estrategia de ataque ofensiva
+    strategy_items = [r for r in ai_results if "planificador" in safe_text(r.get("Control", "")).lower()]
+    if strategy_items:
+        document.add_heading("Estrategia adaptativa de ataque", 3)
+        for item in strategy_items[:2]:
+            evidence = safe_text(item.get("Evidencia", ""))[:280]
+            document.add_paragraph(
+                f"Planificación: {evidence}",
+                style="List Bullet"
+            )
+    
+    # Propuestas de exploit
+    exploit_items = [r for r in ai_results if "exploit" in safe_text(r.get("Control", "")).lower()]
+    exploit_count = len(exploit_items)
+    if exploit_count > 0:
+        crit_exploits = len([e for e in exploit_items if safe_text(e.get("Severidad")) in {"Crítica", "Alta"}])
+        document.add_heading("Propuestas de exploit generadas", 3)
+        document.add_paragraph(
+            f"El sistema IA analizó {len(findings)} hallazgos y generó "
+            f"{exploit_count} propuesta(s) de explotación técnica. "
+            f"{crit_exploits} clasificada(s) como crítica/alta prioridad.",
+        )
+        document.add_paragraph(
+            "Las propuestas incluyen: PoC (Proof of Concept), vectores de ataque contextualizados, "
+            "técnicas de evasión de defensa, y estimaciones de impacto. Se recomienda validación manual "
+            "antes de ejecutar en producción.",
+            style="List Bullet"
+        )
+    
+    # Aprendizaje adaptativo
+    learning_items = [r for r in ai_results if "aprendizaje" in safe_text(r.get("Control", "")).lower() or "adaptive" in safe_text(r.get("Control", "")).lower()]
+    if learning_items:
+        document.add_heading("Aprendizaje y adaptación durante ejecución", 3)
+        for item in learning_items[:1]:
+            desc = safe_text(item.get("Descripción", ""))[:260]
+            document.add_paragraph(
+                f"El agente ajustó dinámicamente la estrategia de ataque basado en respuestas del objetivo: {desc}",
+                style="List Bullet"
+            )
+    
+    # Confianza y cobertura IA
+    confidence_scores = [float(r.get("Confianza", 0) or 0) for r in ai_results if r.get("Confianza")]
+    if confidence_scores:
+        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+        document.add_heading("Métricas de confianza", 3)
+        document.add_paragraph(
+            f"Nivel de confianza promedio en propuestas IA: {avg_confidence:.1%} "
+            f"({len(confidence_scores)} muestras). Los valores altos (>80%) indican alta probabilidad de explotabilidad."
+        )
+
+
+def add_global_scan_classified_summary(document, results, findings, errors):
+    document.add_heading("2. Resumen global clasificado (todas las herramientas)", 1)
+
+    grouped = defaultdict(list)
+    for row in results or []:
+        grouped[safe_text(row.get("Módulo", "Sin módulo"))].append(row)
+
+    table = document.add_table(rows=1, cols=5)
+    table.style = "Table Grid"
+    headers = ["Herramienta/Módulo", "Familia", "Hallazgos", "Crít/Alt", "Errores"]
+    for i, h in enumerate(headers):
+        table.rows[0].cells[i].text = h
+    style_header_row(table.rows[0])
+
+    for module, rows in sorted(grouped.items(), key=lambda x: len(x[1]), reverse=True)[:10]:
+        module_findings = [r for r in rows if is_finding(r)]
+        module_crit_high = [r for r in module_findings if safe_text(r.get("Severidad")) in {"Crítica", "Alta"}]
+        module_errors = [r for r in rows if is_error(r)]
+        cells = table.add_row().cells
+        cells[0].text = truncate(module, 55)
+        cells[1].text = _tool_family(module)
+        cells[2].text = str(len(module_findings))
+        cells[3].text = str(len(module_crit_high))
+        cells[4].text = str(len(module_errors))
+
+    blob = "\n".join(
+        f"{safe_text(x.get('Control'))} | {safe_text(x.get('Descripción'))} | {safe_text(x.get('Evidencia'))}"
+        for x in (results or [])
+    )
+    ips = sorted(set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", blob)))
+    urls = sorted(set(re.findall(r"https?://[^\s|]+", blob, re.IGNORECASE)))
+    services = sorted(set(re.findall(r"Servicio\s*:\s*([^|\n]+)", blob, re.IGNORECASE)))
+    cloud = []
+    if "amazonaws" in blob.lower() or "ec2-" in blob.lower():
+        cloud.append("AWS")
+    if "azure" in blob.lower() or "azureedge" in blob.lower():
+        cloud.append("Azure")
+    if "googleapis" in blob.lower() or "googleusercontent" in blob.lower():
+        cloud.append("GCP")
+
+    document.add_paragraph(
+        "Inventario técnico relevante (consolidado): "
+        f"IPs={len(ips)} | URLs/endpoints={len(urls)} | Servicios={len(services)} | Cloud={', '.join(cloud) if cloud else 'No concluyente'}"
+    )
+    if ips:
+        document.add_paragraph(f"IPs clave: {', '.join(ips[:8])}", style="List Bullet")
+    if urls:
+        document.add_paragraph(f"Endpoints clave: {', '.join(urls[:5])}", style="List Bullet")
+    if services:
+        compact_services = ", ".join(truncate(s.strip(), 28) for s in services[:8])
+        document.add_paragraph(f"Servicios identificados: {compact_services}", style="List Bullet")
+
+    document.add_paragraph(
+        f"Total hallazgos priorizables: {len(findings)} | Errores de ejecución: {len(errors)}. "
+        "Este resumen elimina duplicados y conserva solo evidencia accionable."
+    )
+
+
+def _parse_vuln_fields(item: dict, nmap_structured: dict | None = None) -> dict:
+    """Extracts structured vulnerability fields from a finding item."""
+    evidence = safe_text(item.get("Evidencia", ""))
+    description = safe_text(item.get("Descripción", ""))
+    control = safe_text(item.get("Control", ""))
+
+    cve = ""
+    m = re.search(r"(CVE-\d{4}-\d{4,})", control + " " + evidence, re.IGNORECASE)
+    if m:
+        cve = m.group(1).upper()
+
+    cvss = ""
+    m = re.search(r"CVSS\s*:\s*([0-9.]+)", evidence, re.IGNORECASE)
+    if m:
+        cvss = m.group(1)
+
+    service_affected = ""
+    m = re.search(r"Servicio\s*:\s*([^|\n]+)", evidence, re.IGNORECASE)
+    if m:
+        service_affected = m.group(1).strip()
+
+    url = _extract_literal_url(evidence + " " + description)
+
+    source_m = re.search(r"Fuente\s*:\s*(https?://[^\s|]+)", evidence, re.IGNORECASE)
+    if source_m and not url:
+        url = source_m.group(1).strip()
+
+    if not url:
+        # Never promote inferred host/service locations into the URL field.
+        url = _extract_literal_url(evidence + " " + description + " " + control)
+
+    sources = ""
+    m = re.search(r"Sources\s*:\s*([^|]+)", evidence, re.IGNORECASE)
+    if m:
+        sources = m.group(1).strip()
+
+    sinks = ""
+    m = re.search(r"Sinks\s*:\s*([^|]+)", evidence, re.IGNORECASE)
+    if m:
+        sinks = m.group(1).strip()
+
+    element = _extract_dom_element_hint(evidence + " " + description + " " + control)
+    module = safe_text(item.get("Módulo", "")).lower()
+    if not element and ("xss" in module or "xss" in control.lower()):
+        if sources:
+            element = f"Fuentes de entrada controlables: {truncate(sources, 120)}"
+        if sinks:
+            element += (". " if element else "") + f"Sinks peligrosos: {truncate(sinks, 120)}"
+    elif not element and ("sqli" in module or "sql" in module.lower()):
+        element = "Campo de formulario o parámetro de URL inyectable"
+    elif not element and "path traversal" in module:
+        element = "Parámetro de ruta o nombre de archivo en la solicitud"
+    elif not element and ("upload" in evidence.lower() or "subida" in description.lower()):
+        element = "Elemento de subida de archivos (input type=file)"
+    elif not element and ("login" in url.lower() or "/auth" in url.lower() or "/signin" in url.lower()):
+        element = "Formulario de autenticación (campos usuario/contraseña + botón de acceso)"
+    elif not element and "/api" in url.lower():
+        element = "Endpoint de API REST"
+    elif not element and (sources or sinks):
+        element = f"Script JavaScript: Sources={truncate(sources, 80)}, Sinks={truncate(sinks, 80)}"
+
+    payload = _extract_payload_hint(evidence + " " + description)
+
+    if not payload or "no se capturó" in payload.lower():
+        vuln_type = module + " " + control.lower()
+        if "xss" in vuln_type:
+            payload = "<script>alert(document.cookie)</script>  o  \"><img src=x onerror=alert(1)>"
+        elif "sqli" in vuln_type or "sql injection" in vuln_type:
+            payload = "' OR 1=1--   o   ' UNION SELECT null,username,password FROM users--"
+        elif "ssti" in vuln_type:
+            payload = "{{7*7}}  o  ${7*7}  (verificar si el resultado es 49)"
+        elif "ssrf" in vuln_type:
+            payload = "http://169.254.169.254/latest/meta-data/  (metadata cloud)"
+        elif "path traversal" in vuln_type:
+            payload = "../../../../etc/passwd  o  ..\\..\\windows\\win.ini"
+        elif "rce" in vuln_type or "remote code" in vuln_type:
+            payload = "; id   o   | whoami   o   $(id)  (según contexto de inyección)"
+        elif "open redirect" in vuln_type:
+            payload = "?redirect=https://evil.com  o  ?next=//evil.com"
+        elif "csrf" in vuln_type:
+            payload = "<form action='URL_OBJETIVO' method='POST'>...<img src=x onerror=submit()>"
+        elif "source map" in vuln_type or "sourcemap" in vuln_type:
+            payload = "GET /main.js.map → descarga código fuente JavaScript desofuscado"
+        elif "ftp" in service_affected.lower():
+            payload = "ftp://HOST:21 - credenciales anonimas o brute-force (Hydra/Medusa)"
+        elif "https" in service_affected.lower() or "tls" in vuln_type:
+            payload = "Conexion TLS con cipher debil o certificado invalido - interceptacion MITM"
+        elif "header" in vuln_type or "cabecera" in vuln_type:
+            payload = "Respuesta HTTP sin cabecera - verificable con: curl -I URL"
+
+    if not element and service_affected:
+        element = f"Servicio expuesto: {service_affected} (superficie de red)"
+
+    if not element:
+        if url.startswith("http://") or url.startswith("https://"):
+            element = "Elemento DOM no capturado literalmente en evidencia"
+        else:
+            element = "N/A (hallazgo de infraestructura/red)"
+
+    if url and not (url.startswith("http://") or url.startswith("https://") or url.startswith("ftp://") or url.startswith("ssh://")):
+        # Keep URL strictly literal; if it's not a real URL, clear it.
+        url = ""
+
+    return {
+        "cve": cve,
+        "cvss": cvss,
+        "service_affected": service_affected,
+        "url": url,
+        "element": element,
+        "payload": payload,
+    }
+
+
+def add_vulnerability_location_playbook(document, findings, nmap_structured: dict | None = None):
+    document.add_heading("7. Detalle de vulnerabilidades: dónde están y cómo resolverlas", 1)
+
+    document.add_paragraph(
+        "Para cada vulnerabilidad priorizada se indica: identificador CVE (si aplica), "
+        "descripción, qué afecta, dónde exactamente se localiza (URL + elemento), "
+        "ejemplo técnico de explotación y cómo resolverlo."
+    )
+
+    prioritized = _prioritized_findings(findings, 12)
+    if not prioritized:
+        document.add_paragraph("No se identificaron vulnerabilidades priorizadas.")
+        return
+
+    seen_entries = set()
+    rendered = 0
+
+    for item in prioritized:
+        sev = safe_text(item.get("Severidad", "Informativa"))
+        module = safe_text(item.get("Módulo", ""))
+        control = safe_text(item.get("Control", ""))
+        desc = truncate(item.get("Descripción", ""), 300)
+        fix = truncate(item.get("Recomendación", ""), 300)
+        fields = _parse_vuln_fields(item, nmap_structured=nmap_structured)
+
+        dedupe_key = (
+            safe_text(fields.get("cve", "")).strip().lower(),
+            safe_text(module).strip().lower(),
+            safe_text(control).strip().lower(),
+            safe_text(fields.get("url", "")).strip().lower(),
+            safe_text(fields.get("element", "")).strip().lower(),
+        )
+        if dedupe_key in seen_entries:
+            continue
+        seen_entries.add(dedupe_key)
+        rendered += 1
+
+        if rendered > 12:
+            break
+
+        idx = rendered
+
+        bg = {"Crítica": "7B0000", "Alta": "C0392B", "Media": "D35400"}.get(sev, "2E86C1")
+        fg = "FFFFFF"
+
+        table = document.add_table(rows=0, cols=2)
+        table.style = "Table Grid"
+
+        def _add_row(label, value, bold_val=False):
+            row = table.add_row().cells
+            row[0].text = label
+            _set_cell_bg(row[0], "1C2833")
+            _set_cell_font(row[0], "F2F3F4", bold=True)
+            row[1].text = str(value) if value else "—"
+            if bold_val:
+                _set_cell_font(row[1], bg, bold=True)
+
+        title_row = table.add_row().cells
+        title_row[0].merge(title_row[1])
+        title_text = f"{idx}. [{sev}] {truncate(control, 100)}"
+        if fields["cve"]:
+            title_text = f"{idx}. [{sev}] {fields['cve']} — {truncate(control, 80)}"
+        title_row[0].text = title_text
+        _set_cell_bg(title_row[0], bg)
+        _set_cell_font(title_row[0], fg, bold=True)
+
+        if fields["cve"]:
+            _add_row("CVE", fields["cve"], bold_val=True)
+        if fields["cvss"]:
+            _add_row("CVSS Score", fields["cvss"])
+        _add_row("Módulo / Tipo", module)
+        _add_row("Descripción", desc)
+        if fields["service_affected"]:
+            _add_row("Afecta a", fields["service_affected"])
+        url_literal = fields["url"] if fields["url"] else "URL literal no capturada en evidencia"
+        dom_element = fields["element"] if fields["element"] else "Elemento DOM no capturado literalmente en evidencia"
+
+        if safe_text(url_literal).strip().lower() == safe_text(dom_element).strip().lower():
+            dom_element = "Elemento ya descrito en URL/ubicación; sin duplicidad adicional"
+
+        _add_row("URL literal", url_literal)
+        _add_row("Elemento/parte del DOM", dom_element)
+        _add_row("Ejemplo técnico / Payload", fields["payload"] if fields["payload"] else "—")
+        _add_row("Cómo resolverlo", fix)
+
+        document.add_paragraph("")
 
 
 def _normalize_control_for_key(control: str) -> str:
@@ -1943,17 +2469,17 @@ def add_authenticated_session_evidence(document, results, pages, auth_cookie_det
             )
 
 
-def add_top_findings_table(document, findings):
+def add_top_findings_table(document, findings, nmap_structured: dict | None = None):
     document.add_heading("5. Hallazgos prioritarios", 1)
 
     if not findings:
         document.add_paragraph("No se identificaron hallazgos prioritarios en el alcance automatizado.")
         return
 
-    table = document.add_table(rows=1, cols=6)
+    table = document.add_table(rows=1, cols=7)
     table.style = "Table Grid"
 
-    headers = ["Sev.", "Categoría", "Control", "Conf.", "Evidencia resumida", "Recomendación"]
+    headers = ["Sev.", "Categoría", "Ubicación", "Control", "Conf.", "Evidencia resumida", "Recomendación"]
     hdr_row = table.rows[0]
     for i, h in enumerate(headers):
         hdr_row.cells[i].text = h
@@ -1965,10 +2491,11 @@ def add_top_findings_table(document, findings):
         confidence = item.get("Confianza", "")
         row[0].text = sev
         row[1].text = item.get("Módulo", "")
-        row[2].text = truncate(item.get("Control", ""), 90)
-        row[3].text = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else truncate(str(confidence), 10)
-        row[4].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 220)
-        row[5].text = truncate(item.get("Recomendación", ""), 220)
+        row[2].text = truncate(_extract_location_hint(item, nmap_structured=nmap_structured), 120)
+        row[3].text = truncate(item.get("Control", ""), 90)
+        row[4].text = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else truncate(str(confidence), 10)
+        row[5].text = truncate(clean_evidence_for_report(item.get("Evidencia", "")), 220)
+        row[6].text = truncate(item.get("Recomendación", ""), 220)
         style_severity_cell(row[0], sev)
 
 
@@ -2565,7 +3092,7 @@ def add_full_coverage_annex(document, raw_results, discovery, full_bundle_path="
             if ":" not in token:
                 continue
             key, value = token.split(":", 1)
-            if key.strip().lower() in {"xml", "json"}:
+            if key.strip().lower() in {"xml", "json", "nmap", "gnmap"}:
                 path_text = value.strip()
                 if path_text and path_text.lower() != "no generado":
                     artifact_paths.append(path_text)
@@ -2626,6 +3153,8 @@ def generate_word_report(
     scan_mode: str | None = None,
     auth_cookie_details: list | None = None,
     full_bundle_path: str | None = None,
+    nmap_output: str | None = None,
+    nmap_structured: dict | None = None,
 ):
     os.makedirs("generated_reports", exist_ok=True)
 
@@ -2717,45 +3246,23 @@ def generate_word_report(
     add_summary_table(document, findings, errors, oks)
     add_severity_table(document, findings)
     add_c_level_one_page_summary(document, target_url, findings, errors, assets, deduped_results)
-    add_target_infrastructure_section(document, discovery)
+    
+    add_ai_agent_summary(document, deduped_results, findings)
+    
+    add_global_scan_classified_summary(document, deduped_results, findings, errors)
 
+    if nmap_structured or nmap_output:
+        document.add_page_break()
+        add_nmap_section_to_report(
+            document,
+            nmap_output or "",
+            "Escaneo Nmap — Infraestructura y puertos críticos",
+            nmap_structured=nmap_structured,
+        )
 
-    add_sensitive_assets_section(document, assets)
-
-
-    document.add_heading("3. Superficie relevante descubierta por crawler/discovery", 1)
-    add_discovered_surface_body(document, pages)
-    add_discovery_dictionary_section(document, discovery)
-
-
-    add_auth_surface_summary(document, pages)
-    add_authenticated_session_evidence(document, deduped_results, pages, auth_cookie_details=auth_cookie_details)
-
-
-    add_top_findings_table(document, findings)
-    add_cases_checked(document, deduped_results)
-    add_test_path_summary(document, pages=pages, pages_count=pages_count)
-    add_attack_timeline_section(document, deduped_results)
-    add_offensive_coverage_section(document, deduped_results)
-    add_business_risk_matrix(document, findings)
-    add_compliance_mapping(document, findings)
-    add_manual_offensive_backlog(document, findings, pages, assets)
-    add_defensive_playbook(document, assets, findings)
-    add_asset_risk_scoring_section(document, findings, assets, deduped_results)
-    add_detailed_findings(document, findings)
-
-
+    add_top_findings_table(document, findings, nmap_structured=nmap_structured)
     add_execution_errors_table(document, errors)
-
-    add_full_coverage_annex(
-        document,
-        raw_results=results,
-        discovery=discovery,
-        full_bundle_path=str(full_bundle_path or ""),
-    )
-
-
-
+    add_vulnerability_location_playbook(document, findings, nmap_structured=nmap_structured)
 
     add_conclusion(document, findings, errors, deduped_results)
 

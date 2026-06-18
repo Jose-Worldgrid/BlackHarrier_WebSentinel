@@ -1,9 +1,11 @@
 # Modulo de ejecucion y normalizacion de reconocimiento de red basado en Nmap.
 
 import ctypes
+import ipaddress
 import json
 import os
 import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -14,6 +16,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 NMAP_PROFILES = {
@@ -36,7 +39,7 @@ NMAP_PROFILE_SCRIPTS = {
         "dns-nsid", "banner",
         "mysql-info", "mysql-variables", "mysql-databases",
         "ms-sql-info", "ms-sql-config",
-        "pgsql-info", "mongodb-info", "redis-info",
+        "pgsql-empty-password", "mongodb-info", "redis-info",
     ],
     "AGGRESSIVE": [
         "default", "safe", "discovery", "vuln", "banner",
@@ -47,7 +50,7 @@ NMAP_PROFILE_SCRIPTS = {
         "ldap-rootdse", "smb-os-discovery", "smb-enum-users",
         "mysql-info", "mysql-variables", "mysql-databases",
         "ms-sql-info", "ms-sql-config",
-        "pgsql-info", "mongodb-info", "redis-info",
+        "pgsql-empty-password", "mongodb-info", "redis-info",
     ],
     "KALI_FULL": [
         "default", "safe", "discovery", "vuln", "banner", "auth",
@@ -60,7 +63,7 @@ NMAP_PROFILE_SCRIPTS = {
         "smb-os-discovery", "smb-enum-users", "smb-enum-shares", "smb-security-mode",
         "mysql-info", "mysql-variables", "mysql-databases",
         "ms-sql-info", "ms-sql-config", "ms-sql-empty-password",
-        "pgsql-info", "mongodb-info", "redis-info",
+        "pgsql-empty-password", "mongodb-info", "redis-info",
         "snmp-info", "snmp-sysdescr", "dns-nsid",
     ],
 }
@@ -107,6 +110,257 @@ USER_ENUM_SCRIPT_MARKERS = (
     "userdir",
     "accounts",
 )
+
+HTTP_ENDPOINT_SCRIPT_IDS = (
+    "http-enum",
+    "http-wordpress-enum",
+    "http-wordpress-enum-users",
+    "http-drupal-enum-users",
+    "http-userdir-enum",
+)
+
+
+_STATIC_ENDPOINT_EXTENSIONS = (
+    ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".pdf", ".zip", ".tar", ".gz",
+)
+
+
+def _extract_ip_from_ping_output(text: str) -> str:
+    match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", str(text or ""))
+    if not match:
+        return ""
+    ip = match.group(0).strip()
+    try:
+        ipaddress.ip_address(ip)
+        return ip
+    except Exception:
+        return ""
+
+
+def _resolve_target_execution_vector(target_value: str) -> dict:
+    """Resolve target with ping-first strategy and DNS fallback.
+
+    Returns a dict with:
+    - input
+    - sanitized
+    - hostname
+    - ping_ip
+    - dns_ips
+    - execution_targets
+    - notes
+    """
+    raw = str(target_value or "").strip()
+    normalized = _normalize_target_for_nmap(raw)
+    hostname = normalized
+    notes = []
+
+    if not hostname:
+        return {
+            "input": raw,
+            "sanitized": "",
+            "hostname": "",
+            "ping_ip": "",
+            "dns_ips": [],
+            "execution_targets": [],
+            "notes": ["target vacío o no sanitizable"],
+        }
+
+    ping_ip = ""
+    dns_ips = []
+
+    try:
+        ipaddress.ip_address(hostname)
+        ping_ip = hostname
+        dns_ips = [hostname]
+        notes.append("target ya era una IP")
+    except Exception:
+        try:
+            is_windows = os.name == "nt"
+            ping_cmd = ["ping", "-n" if is_windows else "-c", "1", hostname]
+            ping_proc = subprocess.run(
+                ping_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=6,
+                startupinfo=_startupinfo_hidden(),
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if ping_proc.returncode == 0:
+                ping_ip = _extract_ip_from_ping_output((ping_proc.stdout or "") + "\n" + (ping_proc.stderr or ""))
+                if ping_ip:
+                    notes.append("ping respondió y devolvió IP")
+        except Exception as exc:
+            notes.append(f"ping no disponible o falló: {type(exc).__name__}")
+
+        try:
+            info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            seen_dns = set()
+            for row in info:
+                sockaddr = row[4] or ()
+                if not sockaddr:
+                    continue
+                ip = str(sockaddr[0] or "").strip()
+                if not ip or ip in seen_dns:
+                    continue
+                try:
+                    ipaddress.ip_address(ip)
+                except Exception:
+                    continue
+                seen_dns.add(ip)
+                dns_ips.append(ip)
+            if dns_ips:
+                notes.append("DNS getaddrinfo devolvió IP(s)")
+        except Exception as exc:
+            notes.append(f"DNS lookup falló: {type(exc).__name__}")
+
+    execution_targets = []
+    seen_targets = set()
+    for candidate in [hostname, ping_ip, *dns_ips]:
+        token = str(candidate or "").strip()
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen_targets:
+            continue
+        seen_targets.add(key)
+        execution_targets.append(token)
+
+    return {
+        "input": raw,
+        "sanitized": normalized,
+        "hostname": hostname,
+        "ping_ip": ping_ip,
+        "dns_ips": dns_ips,
+        "execution_targets": execution_targets,
+        "notes": notes,
+    }
+
+
+def _flatten_script_output(script_node: ET.Element) -> str:
+    """Extract rich NSE output from output attr and nested XML elements/tables."""
+    chunks = []
+    raw_out = str(script_node.get("output", "") or "").strip()
+    if raw_out:
+        chunks.append(raw_out)
+
+    for elem in script_node.findall(".//elem"):
+        key = str(elem.get("key", "") or "").strip()
+        value = str(elem.text or "").strip()
+        if key and value:
+            chunks.append(f"{key}: {value}")
+        elif value:
+            chunks.append(value)
+
+    for table in script_node.findall(".//table"):
+        key = str(table.get("key", "") or "").strip()
+        table_text = " ".join((table.itertext() or [])).strip()
+        if key and table_text:
+            chunks.append(f"{key}: {table_text}")
+        elif table_text:
+            chunks.append(table_text)
+
+    deduped = []
+    seen = set()
+    for chunk in chunks:
+        normalized = re.sub(r"\s+", " ", str(chunk or "")).strip()
+        if not normalized:
+            continue
+        low = normalized.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        deduped.append(normalized)
+    return " | ".join(deduped)
+
+
+def _extract_real_endpoints_from_nse(host: str, port: int, service: str, scripts: list[dict], max_items: int = 12) -> list[dict]:
+    """Extract only evidence-backed endpoints from NSE script output."""
+    service_low = str(service or "").lower()
+    if not any(x in service_low for x in ("http", "https")):
+        return []
+
+    endpoints = []
+    seen = set()
+
+    for script in scripts or []:
+        sid = str(script.get("id", "") or "").strip().lower()
+        output = str(script.get("output", "") or "")
+        if not sid or not output:
+            continue
+        if not any(marker in sid for marker in HTTP_ENDPOINT_SCRIPT_IDS):
+            continue
+
+        for m in re.finditer(r"(?<![A-Za-z0-9_])(/[-A-Za-z0-9_./~%+?=&]{1,180})", output):
+            path = str(m.group(1) or "").strip()
+            if not path or len(path) < 2:
+                continue
+            if "*" in path or "{" in path or "}" in path:
+                continue
+            low = path.lower()
+            if any(low.endswith(ext) for ext in _STATIC_ENDPOINT_EXTENSIONS):
+                continue
+            if low in {"/", "/#", "/index"}:
+                continue
+
+            scheme = "https" if "https" in service_low or int(port or 0) in {443, 8443} else "http"
+            url = f"{scheme}://{host}:{port}{path}"
+            key = url.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            endpoints.append({
+                "url": url,
+                "path": path,
+                "script_id": sid,
+                "source_output": output[:220],
+            })
+            if len(endpoints) >= max_items:
+                return endpoints
+
+    return endpoints
+
+
+def _network_scope_for_host(host: str) -> str:
+    try:
+        ip = ipaddress.ip_address(str(host or "").strip())
+        if ip.is_private:
+            return "private"
+        if ip.is_loopback:
+            return "loopback"
+        if ip.is_link_local:
+            return "link-local"
+        return "public"
+    except Exception:
+        return "hostname"
+
+
+def _cloud_provider_for_host(host_blob: str) -> tuple[str, str]:
+    value = str(host_blob or "").lower()
+    if "amazonaws" in value or "ec2-" in value or "elb.amazonaws.com" in value:
+        return "AWS", "EC2/ELB"
+    if "azure" in value or "azureedge" in value or "windows.net" in value:
+        return "Azure", "Azure Service"
+    if "googleusercontent" in value or "gcp" in value or "googleapis" in value:
+        return "GCP", "Google Cloud Service"
+    return "Unknown", "Unknown"
+
+
+def _service_endpoint_location(host: str, port: int, protocol: str, service: str) -> str:
+    svc = str(service or "").lower()
+    target_host = str(host or "unknown")
+    if "https" in svc:
+        return f"https://{target_host}:{port}"
+    if "http" in svc:
+        return f"http://{target_host}:{port}"
+    if svc == "ftp":
+        return f"ftp://{target_host}:{port}"
+    if svc == "ssh":
+        return f"ssh://{target_host}:{port}"
+    return f"{target_host}:{port}/{protocol}"
 
 
 def _is_elevated() -> bool:
@@ -159,6 +413,26 @@ def _find_nmap_binary(preferred_path: str | None = None) -> str:
             return fallback
 
     raise FileNotFoundError("No se encontró nmap.exe en PATH. Instalar Nmap para habilitar este módulo.")
+
+
+def _normalize_target_for_nmap(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    if text.startswith(("http://", "https://")):
+        parsed = urlparse(text)
+        return str(parsed.hostname or "").strip()
+
+    if "/" in text and not re.search(r"/\d{1,2}$", text):
+        text = text.split("/", 1)[0].strip()
+
+    if ":" in text and not re.match(r"^\[[0-9a-fA-F:]+\]$", text):
+        host_part, maybe_port = text.rsplit(":", 1)
+        if maybe_port.isdigit():
+            text = host_part.strip()
+
+    return text
 
 
 def _emit(progress_callback, **kwargs):
@@ -216,6 +490,8 @@ def _detect_nmap_version(nmap_bin: str) -> str:
 def _persist_nmap_artifacts(
     *,
     xml_path: str,
+    normal_path: str,
+    grep_path: str,
     scan_data: dict,
     profile_key: str,
     targets: list[str],
@@ -229,12 +505,24 @@ def _persist_nmap_artifacts(
     base = runs_dir / f"nmap_{profile_key.lower()}_{stamp}"
 
     xml_dump = str(base.with_suffix(".xml"))
+    normal_dump = str(base.with_suffix(".nmap"))
+    grep_dump = str(base.with_suffix(".gnmap"))
     json_dump = str(base.with_suffix(".json"))
 
     try:
         shutil.copy2(xml_path, xml_dump)
     except Exception:
         xml_dump = ""
+
+    try:
+        shutil.copy2(normal_path, normal_dump)
+    except Exception:
+        normal_dump = ""
+
+    try:
+        shutil.copy2(grep_path, grep_dump)
+    except Exception:
+        grep_dump = ""
 
     payload = {
         "meta": {
@@ -254,7 +542,7 @@ def _persist_nmap_artifacts(
     except Exception:
         json_dump = ""
 
-    return {"xml": xml_dump, "json": json_dump}
+    return {"xml": xml_dump, "nmap": normal_dump, "gnmap": grep_dump, "json": json_dump}
 
 
 def _run_nmap_command(cmd: list[str], timeout_seconds: int, cancel_event=None, progress_callback=None) -> tuple[int, str, str]:
@@ -320,10 +608,20 @@ def _parse_nmap_xml(xml_path: str, progress_callback=None) -> dict:
         state = state_node.get("state", "unknown") if state_node is not None else "unknown"
 
         host_addrs = [addr.get("addr") for addr in host_node.findall("address") if addr.get("addr")]
+        hostnames = [x.get("name") for x in host_node.findall("hostnames/hostname") if x.get("name")]
         host_value = host_addrs[0] if host_addrs else "unknown"
 
         host_info = {
             "host": host_value,
+            "hostname": hostnames[0] if hostnames else "",
+            "hostnames": hostnames,
+            "addresses": [
+                {
+                    "addr": addr.get("addr", ""),
+                    "addrtype": addr.get("addrtype", ""),
+                }
+                for addr in host_node.findall("address")
+            ],
             "state": state,
             "os": "",
             "ports": [],
@@ -359,7 +657,7 @@ def _parse_nmap_xml(xml_path: str, progress_callback=None) -> dict:
 
                 for script in p.findall("script"):
                     sid = script.get("id", "")
-                    out = script.get("output", "")
+                    out = _flatten_script_output(script)
                     port_data["scripts"].append({"id": sid, "output": out})
                     if sid or out:
                         _emit(
@@ -386,7 +684,7 @@ def _parse_nmap_xml(xml_path: str, progress_callback=None) -> dict:
         for script in host_node.findall("hostscript/script"):
             host_info["scripts"].append({
                 "id": script.get("id", ""),
-                "output": script.get("output", ""),
+                "output": _flatten_script_output(script),
             })
 
         hosts_data.append(host_info)
@@ -534,8 +832,12 @@ def normalize_nmap_results(scan_data: dict, profile: str) -> list[dict]:
 
     for host in hosts:
         host_ip = host.get("host", "unknown")
+        host_name = host.get("hostname", "")
         open_ports = [p for p in host.get("ports", []) if p.get("state") == "open"]
         open_ports_count += len(open_ports)
+        host_blob = " ".join([str(host_ip), str(host_name), " ".join(host.get("hostnames") or [])])
+        cloud_provider, cloud_resource = _cloud_provider_for_host(host_blob)
+        network_scope = _network_scope_for_host(host_ip)
 
         rows.append({
             "control": f"Nmap host discovery: {host_ip}",
@@ -548,6 +850,21 @@ def normalize_nmap_results(scan_data: dict, profile: str) -> list[dict]:
                 f"Puertos abiertos: {len(open_ports)}"
             ),
             "recommendation": "Mantener inventario de activos y segmentación por nivel de exposición.",
+        })
+
+        rows.append({
+            "control": f"Clasificación de entorno: {host_ip}",
+            "status": "Detectado",
+            "severity": "Informativa",
+            "description": "Clasificación automática de red y entorno cloud basada en evidencia Nmap.",
+            "evidence": (
+                f"Host/IP: {host_ip}"
+                + (f" | Hostname: {host_name}" if host_name else "")
+                + f" | Ámbito de red: {network_scope}"
+                + f" | Cloud: {cloud_provider}"
+                + f" | Recurso: {cloud_resource}"
+            ),
+            "recommendation": "Priorizar explotación en activos first-party/public y validar ownership legal de cloud/terceros.",
         })
 
         for p in open_ports:
@@ -584,6 +901,45 @@ def normalize_nmap_results(scan_data: dict, profile: str) -> list[dict]:
                 ),
                 "recommendation": "Restringir exposición a red pública, aplicar hardening y parches del servicio detectado.",
             })
+
+            rows.append({
+                "control": f"Endpoint/servicio objetivo {host_ip}:{p.get('port')}/{p.get('protocol')}",
+                "status": "Detectado",
+                "severity": "Informativa" if sev == "Baja" else sev,
+                "description": "Objetivo técnico priorizable para validación ofensiva basada en exposición real.",
+                "evidence": (
+                    f"Ubicación: {_service_endpoint_location(host_name or host_ip, int(p.get('port', 0) or 0), str(p.get('protocol','tcp')), str(p.get('service','')))} | "
+                    f"Host/IP: {host_ip} | Puerto: {p.get('port')}/{p.get('protocol')} | "
+                    f"Servicio: {p.get('service','unknown')} | Producto: {p.get('product','')} | Versión: {p.get('version','')}"
+                ),
+                "recommendation": "Usar esta ubicación como target directo en pruebas autenticadas/no autenticadas según el servicio expuesto.",
+            })
+
+            real_endpoints = _extract_real_endpoints_from_nse(
+                host_name or host_ip,
+                int(p.get("port", 0) or 0),
+                str(p.get("service", "") or ""),
+                scripts,
+                max_items=10,
+            )
+            for endpoint in real_endpoints:
+                ep_url = endpoint.get("url", "")
+                ep_path = endpoint.get("path", "")
+                ep_script = endpoint.get("script_id", "")
+                ep_source = endpoint.get("source_output", "")
+                is_api = any(tok in ep_path.lower() for tok in ["/api", "/graphql", "/rest", "/v1", "/v2"])
+
+                rows.append({
+                    "control": f"Endpoint real descubierto por NSE: {ep_path}",
+                    "status": "Posible hallazgo" if is_api else "Detectado",
+                    "severity": "Media" if is_api else "Informativa",
+                    "description": "Ruta real extraída de scripts NSE HTTP; no inferida sintéticamente.",
+                    "evidence": (
+                        f"URL: {ep_url} | Host/IP: {host_ip} | Puerto: {p.get('port')}/{p.get('protocol')} | "
+                        f"Script NSE: {ep_script} | Evidencia: {ep_source}"
+                    ),
+                    "recommendation": "Validar autenticación/autorización y exposición funcional de este endpoint en pruebas web controladas.",
+                })
 
             for tech in tech_hits:
                 tech_key = (host_ip, int(p.get("port", 0) or 0), tech)
@@ -646,6 +1002,20 @@ def normalize_nmap_results(scan_data: dict, profile: str) -> list[dict]:
                     "recommendation": "Unificar respuestas de autenticación, aplicar rate limit y bloquear enumeración por canal externo.",
                 })
 
+        for host_script in host.get("scripts") or []:
+            hs_id = str(host_script.get("id", "") or "")
+            hs_out = str(host_script.get("output", "") or "")
+            if not hs_id and not hs_out:
+                continue
+            rows.append({
+                "control": f"Nmap hostscript: {hs_id or 'script_sin_id'}",
+                "status": "Detectado",
+                "severity": "Informativa",
+                "description": "Salida de hostscript NSE capturada para correlación técnica.",
+                "evidence": f"Host/IP: {host_ip} | Script: {hs_id or 'n/a'} | Output: {hs_out[:260]}",
+                "recommendation": "Correlacionar esta evidencia con CVEs, servicios y exposición real antes de priorizar ataque.",
+            })
+
     rows.append({
         "control": "Nmap export estructurado",
         "status": "Detectado",
@@ -679,7 +1049,22 @@ def run_nmap_recon(
     cancel_event=None,
 ) -> tuple[list[dict], dict]:
     """Execute Nmap scan with XML parsing and normalized output."""
-    clean_targets = [str(t).strip() for t in (targets or []) if str(t).strip()]
+    execution_vectors = [_resolve_target_execution_vector(t) for t in (targets or [])]
+
+    normalized_targets = []
+    for vector in execution_vectors:
+        normalized_targets.extend(vector.get("execution_targets") or [])
+
+    clean_targets = []
+    seen_targets = set()
+    for t in normalized_targets:
+        if not t:
+            continue
+        key = t.lower()
+        if key in seen_targets:
+            continue
+        seen_targets.add(key)
+        clean_targets.append(t)
     if not clean_targets:
         return ([{
             "control": "Nmap reconnaissance",
@@ -730,14 +1115,19 @@ def run_nmap_recon(
     effective_timeout = max(int(timeout_seconds or 0), len(clean_targets) * per_target_floor)
 
     with tempfile.TemporaryDirectory(prefix="bh_nmap_") as tmpdir:
-        xml_path = str(Path(tmpdir) / "nmap_scan.xml")
+        out_base = str(Path(tmpdir) / "nmap_scan")
+        xml_path = f"{out_base}.xml"
+        normal_path = f"{out_base}.nmap"
+        grep_path = f"{out_base}.gnmap"
         cmd = [
             nmap_bin,
             *args,
             "--stats-every",
             "5s",
-            "-oX",
-            xml_path,
+            "-oN",
+            "-",
+            "-oA",
+            out_base,
             *clean_targets,
         ]
 
@@ -753,32 +1143,55 @@ def run_nmap_recon(
             ),
             "recommendation": "Mantener Nmap actualizado y usar perfil KALI_FULL/DEEP para cobertura extensa en infraestructura autorizada.",
         }
-        rc, _stdout, stderr = _run_nmap_command(
+        vector_rows = []
+        for vector in execution_vectors:
+            vector_rows.append({
+                "control": f"Vector de ejecución Nmap: {vector.get('input') or 'target'}",
+                "status": "Detectado" if (vector.get("execution_targets") or []) else "No evidenciado",
+                "severity": "Informativa",
+                "description": "Resolución de target aplicada con flujo ping -> DNS -> sanitización antes de ejecutar Nmap.",
+                "evidence": (
+                    f"Input: {vector.get('input','')} | Sanitizado: {vector.get('sanitized','')} | "
+                    f"Ping IP: {vector.get('ping_ip','no resuelto')} | "
+                    f"DNS IPs: {', '.join(vector.get('dns_ips') or []) or 'ninguna'} | "
+                    f"Targets ejecución: {', '.join(vector.get('execution_targets') or []) or 'ninguno'} | "
+                    f"Notas: {'; '.join(vector.get('notes') or []) or 'sin notas'}"
+                ),
+                "recommendation": "Comparar este vector con Nmap CLI manual cuando se detecte deriva de cobertura.",
+            })
+
+        rc, stdout, stderr = _run_nmap_command(
             cmd,
             timeout_seconds=effective_timeout,
             cancel_event=cancel_event,
             progress_callback=progress_callback,
         )
+        combined_output = stdout if not stderr else f"{stdout}\n\n[STDERR]\n{stderr}"
 
         if rc == 130:
-            return ([meta_row, {
+            return ([meta_row, *vector_rows, {
                 "control": "Nmap reconnaissance",
                 "status": "Error",
                 "severity": "Media",
                 "description": "Escaneo Nmap cancelado por el usuario/agente.",
                 "evidence": "Cancel event recibido.",
                 "recommendation": "Reintentar cuando la ventana de escaneo esté disponible.",
-            }], {"hosts": []})
+            }], {"hosts": [], "raw_stdout": stdout, "raw_stderr": stderr, "raw_output": combined_output})
 
         if rc == 124:
             if Path(xml_path).exists():
 
                 try:
                     scan_data = _parse_nmap_xml(xml_path, progress_callback=progress_callback)
-                    rows = [meta_row]
+                    scan_data["raw_stdout"] = stdout
+                    scan_data["raw_stderr"] = stderr
+                    scan_data["raw_output"] = combined_output
+                    rows = [meta_row, *vector_rows]
                     rows.extend(normalize_nmap_results(scan_data, profile=profile_key))
                     dumps = _persist_nmap_artifacts(
                         xml_path=xml_path,
+                        normal_path=normal_path,
+                        grep_path=grep_path,
                         scan_data=scan_data,
                         profile_key=profile_key,
                         targets=clean_targets,
@@ -791,7 +1204,12 @@ def run_nmap_recon(
                         "status": "Detectado",
                         "severity": "Informativa",
                         "description": "Se guardaron artefactos estructurados de Nmap para análisis posterior y trazabilidad.",
-                        "evidence": f"XML: {dumps.get('xml') or 'no generado'} | JSON: {dumps.get('json') or 'no generado'}",
+                        "evidence": (
+                            f"XML: {dumps.get('xml') or 'no generado'} | "
+                            f"NMAP: {dumps.get('nmap') or 'no generado'} | "
+                            f"GNMAP: {dumps.get('gnmap') or 'no generado'} | "
+                            f"JSON: {dumps.get('json') or 'no generado'}"
+                        ),
                         "recommendation": "Conservar estos artefactos para correlación, auditoría y comparación histórica.",
                     })
                     rows.append({
@@ -810,30 +1228,35 @@ def run_nmap_recon(
                 except Exception:
                     pass
 
-            return ([meta_row, {
+            return ([meta_row, *vector_rows, {
                 "control": "Nmap reconnaissance (sin resultados por timeout)",
                 "status": "No probado",
                 "severity": "Media",
                 "description": "Timeout de Nmap alcanzado antes de finalizar. No hay datos suficientes para evaluar exposición de red.",
                 "evidence": f"Timeout efectivo: {effective_timeout}s | Targets: {len(clean_targets)}",
                 "recommendation": "Aumentar timeout o reducir alcance por ejecución. No tratar esta salida como ausencia de vulnerabilidades.",
-            }], {"hosts": []})
+            }], {"hosts": [], "raw_stdout": stdout, "raw_stderr": stderr, "raw_output": combined_output})
 
         if not Path(xml_path).exists():
-            return ([meta_row, {
+            return ([meta_row, *vector_rows, {
                 "control": "Nmap reconnaissance",
                 "status": "Error",
                 "severity": "Media",
                 "description": "Nmap no generó salida XML estructurada.",
                 "evidence": stderr[:500],
                 "recommendation": "Verificar instalación de Nmap y permisos de ejecución.",
-            }], {"hosts": []})
+            }], {"hosts": [], "raw_stdout": stdout, "raw_stderr": stderr, "raw_output": combined_output})
 
         scan_data = _parse_nmap_xml(xml_path, progress_callback=progress_callback)
-        rows = [meta_row]
+        scan_data["raw_stdout"] = stdout
+        scan_data["raw_stderr"] = stderr
+        scan_data["raw_output"] = combined_output
+        rows = [meta_row, *vector_rows]
         rows.extend(normalize_nmap_results(scan_data, profile=profile_key))
         dumps = _persist_nmap_artifacts(
             xml_path=xml_path,
+            normal_path=normal_path,
+            grep_path=grep_path,
             scan_data=scan_data,
             profile_key=profile_key,
             targets=clean_targets,
@@ -846,7 +1269,12 @@ def run_nmap_recon(
             "status": "Detectado",
             "severity": "Informativa",
             "description": "Se guardaron artefactos estructurados de Nmap para análisis posterior y trazabilidad.",
-            "evidence": f"XML: {dumps.get('xml') or 'no generado'} | JSON: {dumps.get('json') or 'no generado'}",
+            "evidence": (
+                f"XML: {dumps.get('xml') or 'no generado'} | "
+                f"NMAP: {dumps.get('nmap') or 'no generado'} | "
+                f"GNMAP: {dumps.get('gnmap') or 'no generado'} | "
+                f"JSON: {dumps.get('json') or 'no generado'}"
+            ),
             "recommendation": "Conservar estos artefactos para correlación, auditoría y comparación histórica.",
         })
         _emit(progress_callback, stage="nmap-finished", detail=f"Hosts: {len(scan_data.get('hosts', []))}")

@@ -187,6 +187,8 @@ class FreeAssessment:
 
 
             for result in assessment["normalized_results"]:
+                if str(result.get("finding_type") or "").strip().lower() == "scope_limitation":
+                    continue
                 assessment["summary"]["total_findings"] += 1
                 if result.get("severity") == "critical":
                     assessment["summary"]["critical_findings"] += 1
@@ -283,16 +285,51 @@ class FreeAssessment:
 
                 if analysis.get("vulnerabilities"):
                     for vuln in analysis["vulnerabilities"]:
+                        finding_type = "vulnerability"
+                        if isinstance(vuln, dict):
+                            vuln_type = str(vuln.get("type") or "ssl_issue")
+                            vuln_severity = str(vuln.get("severity") or "medium")
+                            vuln_description = str(vuln.get("description") or "SSL/TLS issue detected")
+                            vuln_value = str(vuln.get("value") or "")
+                        else:
+                            # ssl_analyzer can append plain strings for connectivity/cert errors.
+                            vuln_text = str(vuln or "").strip()
+                            vuln_text_l = vuln_text.lower()
+                            vuln_type = "ssl_issue"
+                            vuln_severity = "medium"
+                            if "cannot resolve hostname" in vuln_text_l:
+                                vuln_severity = "info"
+                                finding_type = "scope_limitation"
+                            elif "timeout" in vuln_text_l:
+                                vuln_severity = "low"
+                                finding_type = "scope_limitation"
+                            elif "certificate_verify_failed" in vuln_text_l or "self-signed" in vuln_text_l:
+                                vuln_severity = "medium"
+                            elif "connection error" in vuln_text_l:
+                                vuln_severity = "low"
+                                finding_type = "scope_limitation"
+                            elif "sslv2" in vuln_text_l or "sslv3" in vuln_text_l or "tlsv1.0" in vuln_text_l or "tlsv1.1" in vuln_text_l:
+                                vuln_severity = "high"
+
+                            vuln_description = vuln_text or "SSL/TLS issue detected"
+                            vuln_value = vuln_text
+
+                        if finding_type == "scope_limitation":
+                            vuln_type = "technical_limitation"
+                            vuln_description = f"Limitación técnica durante validación SSL: {vuln_description}"
+                            vuln_severity = "info"
+
                         results.append({
                             "module": "SSL/TLS Analysis",
                             "control": "SSL/TLS Configuration",
                             "port": finding["port"],
-                            "status": vuln["type"],
-                            "severity": vuln.get("severity", "medium"),
-                            "description": vuln.get("description", ""),
-                            "evidence": f"Port {finding['port']}: {vuln.get('value', '')}",
+                            "status": vuln_type,
+                            "severity": vuln_severity,
+                            "description": vuln_description,
+                            "evidence": f"Port {finding['port']}: {vuln_value}",
                             "recommendation": "Update SSL/TLS configuration; use modern protocols (TLS 1.2+) and strong ciphers",
-                            "module_acronym": "SSL"
+                            "module_acronym": "SSL",
+                            "finding_type": finding_type,
                         })
 
         return results

@@ -12,7 +12,13 @@ storage/.db_key
 storage/audit_results.db
 generated_reports/
 *.docx
+logs/
+report_*.txt
+report_content*.txt
+extracted_text.txt
+temp_report_*/
 storage/ai_agent_memory.json
+storage/agent_knowledge.json
 
 webaudit-toolkit/
 
@@ -23,3 +29,7 @@ webaudit-toolkit/
 venv/
 .venv/
 .vscode/
+
+.env
+.env.*
+!.env.example

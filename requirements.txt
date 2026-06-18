@@ -10,3 +10,5 @@ pytest>=8.3.0
 # Optional – AI exploit suggester (local inference via Ollama REST API, no extra package needed)
 # Optional – enhanced CVE scoring
 lxml>=4.9.0
+openai>=1.40.0
+python-dotenv>=1.0.1

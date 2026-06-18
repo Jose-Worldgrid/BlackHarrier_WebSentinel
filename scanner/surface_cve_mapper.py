@@ -37,6 +37,66 @@ def _page_url(page: dict) -> str:
     return _safe(page.get("final_url") or page.get("url"))
 
 
+def _status_code(page: dict) -> int:
+    try:
+        return int(page.get("status_code") or 0)
+    except Exception:
+        return 0
+
+
+def _looks_like_notfound(url: str) -> bool:
+    p = _path(url)
+    noisy_tokens = (
+        "notfound", "not-found", "404", "error", "no-encontrado", "no_encontrado"
+    )
+    return any(tok in p for tok in noisy_tokens)
+
+
+def _is_noise_page(page: dict) -> bool:
+    classification = _safe(page.get("classification")).lower()
+    status = _status_code(page)
+    final_url = _safe(page.get("final_url") or page.get("url"))
+    url = _safe(page.get("url"))
+
+    if classification in {"soft_404", "request_error", "html_candidate", "redirect_loop", "timeout"}:
+        return True
+    if status == 404:
+        return True
+    if _looks_like_notfound(final_url) or _looks_like_notfound(url):
+        return True
+    return False
+
+
+def _filter_actionable_pages(pages: list, family: str) -> list:
+    """Drop noisy or non-actionable pages to avoid false-positive surface mapping."""
+    filtered = []
+    fam = _safe(family).lower()
+
+    for page in pages or []:
+        if _is_noise_page(page):
+            continue
+
+        status = _status_code(page)
+        classification = _safe(page.get("classification")).lower()
+
+        # Auth bypass can target auth/protected routes even if not fully accessible.
+        if fam == "authentication bypass":
+            if status in {401, 403} and classification in {"auth", "protected", "protected_redirect_to_auth", "admin_candidate"}:
+                filtered.append(page)
+                continue
+            if 200 <= status < 400:
+                filtered.append(page)
+            continue
+
+        # For exploit families in general, avoid 4xx/5xx routes to reduce noisy mappings.
+        if status and status >= 400:
+            continue
+
+        filtered.append(page)
+
+    return filtered
+
+
 def _forms(page: dict) -> list:
     return list(page.get("forms") or [])
 
@@ -78,6 +138,25 @@ def _param_names_in_url(url: str) -> list[str]:
     query = urlparse(_safe(url)).query
     return list(parse_qs(query).keys())
 
+def _is_authenticated_context(page: dict) -> bool:
+    return _safe(page.get("discovery_context")).lower() == "post_login"
+
+def _has_actionable_input(page: dict) -> bool:
+    """Signals that a page has technical input surface to exploit."""
+    url = _page_url(page)
+    if _param_names_in_url(url):
+        return True
+
+    for inp in _inputs(page):
+        if _safe(inp.get("name")):
+            return True
+
+    runtime = page.get("browser_runtime") or {}
+    runtime_inputs = runtime.get("inputs") or page.get("browser_inputs") or []
+    if runtime_inputs:
+        return True
+
+    return False
 
 
 
@@ -416,6 +495,7 @@ def map_cve_to_surface(
     """
     Returns up to max_hits HitContext dicts for the given exploit family.
     """
+    pages = _filter_actionable_pages(pages or [], family)
     matcher = _FAMILY_MATCHERS.get(family)
     if matcher is None:
 
@@ -428,6 +508,7 @@ def map_cve_to_surface(
                 results.append({
                     "url": url,
                     "dom_target": f"Formulario en {_path(url)}",
+            is_auth_ctx = _is_authenticated_context(page)
                     "field": "",
                     "context": f"La familia '{family}' podría afectar este formulario.",
                     "confidence": 0.35,
@@ -442,6 +523,15 @@ def map_cve_to_surface(
     except Exception:
         return []
 
+            # Avoid non-actionable protected/admin paths when session is not authenticated.
+            if classification in {"protected", "protected_redirect_to_auth"}:
+                continue
+            if classification == "admin_candidate" and not is_auth_ctx:
+                continue
+
+            # For API/admin-like surfaces, require at least one actionable input signal.
+            if classification in {"admin_candidate", "api_candidate"} and not _has_actionable_input(page):
+                continue
 
     seen = set()
     unique = []
@@ -470,9 +560,22 @@ def enrich_suggestions_with_surface(
         if hits and "TARGET" in _safe(sug.get("poc")):
             best_url = _safe(hits[0].get("url"))
             if best_url:
-                sug["poc"] = _safe(sug.get("poc")).replace(
-                    "https://TARGET", best_url
                 ).replace(
                     "{target_url}", best_url
                 )
     return suggestions
+
+                # Only flag RCE where there are concrete inputs/parameters to inject.
+                for inp in _inputs(page):
+                    iname = _safe(inp.get("name")).lower()
+                    if iname and iname in rce_param_hints:
+                        hits.append({
+                            "url": url,
+                            "dom_target": f"<input name='{inp['name']}'> en form[action='{inp['action']}']",
+                            "field": inp["name"],
+                            "context": (
+                                f"El campo '{inp['name']}' en {_path(url)} es candidato a inyección de comandos/plantillas "
+                                "si llega al backend sin sanitización estricta."
+                            ),
+                            "confidence": 0.75,
+                        })

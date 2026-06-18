@@ -43,6 +43,7 @@ from scanner.ssrf import scan_ssrf_hints
 from scanner.path_traversal import scan_path_traversal
 from scanner.dependency_exposure import scan_dependency_exposure
 from scanner.discovery import discover_surface, classify_url as classify_discovery_url, get_soft404_baseline
+from scanner.navbar_explorer import discover_navbar_routes
 from scanner.katana_discovery import run_katana_discovery
 from scanner.auth_sqli import scan_auth_sqli
 from scanner import network_recon
@@ -974,6 +975,83 @@ st.markdown("""
         font-size: 0.72rem;
         color: #8ea0b8;
     }
+
+    .bh-mode-card {
+        margin: 0.45rem 0 0.85rem 0;
+        padding: 0.7rem 0.8rem;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(14, 20, 30, 0.92), rgba(11, 16, 24, 0.86));
+    }
+
+    .bh-mode-title {
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #93a7be;
+        margin-bottom: 0.3rem;
+    }
+
+    .bh-mode-desc {
+        font-size: 0.84rem;
+        color: #d8e3ef;
+        line-height: 1.35;
+        margin-bottom: 0.45rem;
+    }
+
+    .bh-mode-meta {
+        font-size: 0.76rem;
+        color: #8ea0b8;
+    }
+
+    .bh-ai-header {
+        margin: 0.35rem 0 0.7rem 0;
+        padding: 0.78rem 0.9rem;
+        border: 1px solid rgba(56, 189, 248, 0.24);
+        border-radius: 12px;
+        background: linear-gradient(120deg, rgba(8, 47, 73, 0.52), rgba(17, 24, 39, 0.92));
+    }
+
+    .bh-ai-title {
+        color: #d9f2ff;
+        font-size: 0.98rem;
+        font-weight: 700;
+        margin-bottom: 0.2rem;
+    }
+
+    .bh-ai-subtitle {
+        color: #9bb8ce;
+        font-size: 0.8rem;
+    }
+
+    .bh-ai-status {
+        margin: 0.5rem 0 0.45rem 0;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 10px;
+        color: #dbe7f3;
+        font-size: 0.83rem;
+        background: rgba(15, 23, 42, 0.52);
+    }
+
+    .bh-cve-header {
+        margin: 0.3rem 0 0.9rem 0;
+        padding: 0.78rem 0.9rem;
+        border-radius: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(9, 13, 20, 0.9));
+    }
+
+    [data-testid="stExpander"] {
+        border: 1px solid rgba(148, 163, 184, 0.16) !important;
+        border-radius: 12px !important;
+        background: rgba(9, 14, 22, 0.62) !important;
+        margin-bottom: 0.55rem !important;
+    }
+
+    [data-testid="stProgressBar"] > div > div {
+        background: linear-gradient(90deg, #0ea5e9, #22c55e) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1045,7 +1123,25 @@ with st.sidebar:
     )
 
     parity_nmap_nessus = False
-    st.caption("BlackHarrier Core activo: flujo integral obligatorio (reconocimiento + crawling + mapeo + explotación controlada).")
+    mode_summary = {
+        "Quick": "reconocimiento rapido, crawling ligero y validacion basica de exposicion con bajo impacto.",
+        "Full": "flujo integral equilibrado: reconocimiento, crawling, mapeo y explotacion controlada.",
+        "Infrastructure Deep Scan": "prioriza infraestructura: enumeracion profunda de servicios, correlacion avanzada y mayor cobertura tecnica.",
+        "Safe": "enfoque conservador: menor agresividad, menos payloads y validaciones no intrusivas.",
+        "Deep Audit": "auditoria web profunda con mayor cobertura funcional y pruebas ofensivas controladas.",
+        "Offensive Authorized": "maxima profundidad ofensiva autorizada: cobertura extendida, validaciones intensivas y correlacion avanzada.",
+    }
+    selected_profile = SCAN_MODES.get(scan_mode, {})
+    st.markdown(
+        (
+            '<div class="bh-mode-card">'
+            '<div class="bh-mode-title">Perfil activo · BlackHarrier Core</div>'
+            f'<div class="bh-mode-desc">{mode_summary.get(scan_mode, "perfil personalizado con ejecucion integral controlada.")}</div>'
+            f'<div class="bh-mode-meta">Modo: <b>{scan_mode}</b> · Payloads: <b>{selected_profile.get("max_payloads", "-")}</b> · Delay: <b>{selected_profile.get("delay", "-")}s</b></div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
     verify_ssl = st.checkbox(
         "Validar certificados SSL/TLS",
@@ -1163,20 +1259,44 @@ with st.sidebar:
     nessus_template_uuid = str(os.getenv("NESSUS_TEMPLATE_UUID", "basic")).strip() or "basic"
     enable_nessus = bool(nessus_access_key and nessus_secret_key)
 
-    st.caption("BlackHarrier Scanner integrado: puertos, fingerprinting, CVE y análisis SSL/TLS ejecutados en cada auditoría.")
+    st.caption("BlackHarrier Scanner integrado: puertos, fingerprinting, CVE y análisis SSL/TLS.")
     if enable_nessus:
         st.caption("Nessus integrado automáticamente para cobertura ampliada de vulnerabilidades.")
 
 
     st.markdown("**Agente IA – Propuesta de exploits**")
-    import shutil as _shutil2
-    _ollama_bin = _shutil2.which("ollama") or _shutil2.which("ollama.exe")
-    if _ollama_bin:
-        enable_exploit_ai = st.checkbox(
-            "Activar propuesta de exploits con IA",
-            value=True,
-            help="Usa un modelo local (Ollama) para generar PoC y análisis de exploits a partir de los CVEs encontrados.",
-        )
+    azure_default_deployment = str(os.getenv("AZURE_OPENAI_MINI_DEPLOYMENT", "gpt-4o-mini") or "gpt-4o-mini").strip()
+    azure_endpoint = str(os.getenv("AZURE_OPENAI_ENDPOINT", "") or "").strip()
+    azure_api_key = str(os.getenv("AZURE_OPENAI_API_KEY", "") or "").strip()
+    azure_ready = bool(azure_endpoint and azure_api_key and azure_default_deployment)
+
+    enable_exploit_ai = st.checkbox(
+        "Activar propuesta de exploits con IA",
+        value=True,
+        help="Usa Azure OpenAI para análisis de CVEs, razonamiento de explotabilidad y generación de PoC.",
+    )
+    exploit_ai_provider = st.selectbox(
+        "Proveedor IA",
+        options=["azure_openai", "ollama_local", "offline"],
+        index=0,
+        disabled=not enable_exploit_ai,
+        help="azure_openai por defecto. Puedes usar ollama_local como fallback local o offline sin LLM.",
+    )
+
+    if exploit_ai_provider == "azure_openai":
+        exploit_ai_model = st.text_input(
+            "Deployment Azure OpenAI",
+            value=azure_default_deployment,
+            disabled=not enable_exploit_ai,
+            help="Nombre del deployment en Azure OpenAI (ej: gpt-4o-mini).",
+        ).strip() or azure_default_deployment
+        os.environ["AZURE_OPENAI_MINI_DEPLOYMENT"] = exploit_ai_model
+        if not azure_ready:
+            st.caption(
+                "Azure OpenAI incompleto: configura AZURE_OPENAI_ENDPOINT, "
+                "AZURE_OPENAI_API_KEY y AZURE_OPENAI_MINI_DEPLOYMENT para análisis IA completo."
+            )
+    elif exploit_ai_provider == "ollama_local":
         exploit_ai_model = st.selectbox(
             "Modelo Ollama",
             options=["llama3", "mistral", "codellama", "llama3:8b", "mistral:7b"],
@@ -1185,9 +1305,7 @@ with st.sidebar:
             help="Modelo local de Ollama. Asegúrate de haberlo descargado con 'ollama pull <modelo>'.",
         )
     else:
-        st.caption("Ollama no detectado – el agente IA usará plantillas offline. Instala Ollama para análisis enriquecido.")
-        enable_exploit_ai = st.checkbox("Activar propuesta de exploits (modo offline)", value=True)
-        exploit_ai_model = "llama3"
+        exploit_ai_model = "offline"
 
     run_scan = st.button(
         "Iniciar auditoría",
@@ -1517,7 +1635,7 @@ def _contextual_module_boost(module_name, features):
     return boost
 
 
-def build_adaptive_parallel_jobs(target_url, pages, effective_pages, auth_client, scan_payload_limit):
+def build_adaptive_parallel_jobs(target_url, pages, effective_pages, auth_client, scan_payload_limit, ai_strategy=None):
     jobs = [
         ("XSS reflejado", scan_reflected_xss_pages, (effective_pages, scan_payload_limit)),
         ("SQL Injection", scan_sqli_pages, (effective_pages, scan_payload_limit)),
@@ -1534,14 +1652,37 @@ def build_adaptive_parallel_jobs(target_url, pages, effective_pages, auth_client
     memory = load_memory()
     features = _extract_target_features(pages)
     ai_preferences = _collect_ai_preferences(pages)
+    ai_strategy = ai_strategy or {}
+
+    strategy_ranking = {}
+    for row in ai_strategy.get("ranked_modules") or []:
+        module_name = str(row.get("module") or "").strip()
+        if not module_name:
+            continue
+        try:
+            strategy_ranking[module_name] = float(row.get("score", 0.0) or 0.0)
+        except Exception:
+            strategy_ranking[module_name] = 0.0
+
+    fp_candidates = ai_strategy.get("false_positive_candidates") or []
+    fp_module_penalty = {}
+    for row in fp_candidates:
+        module_name = str(row.get("module") or "").strip()
+        if not module_name:
+            continue
+        confidence = float(row.get("confidence", 0.0) or 0.0)
+        fp_module_penalty[module_name] = max(fp_module_penalty.get(module_name, 0.0), max(0.0, 0.6 - confidence))
 
     ranked = []
     for index, (name, func, args) in enumerate(jobs):
         ai_score = ai_preferences.get(name, 0.0)
         memory_score = _memory_module_score(memory, name)
         context_boost = _contextual_module_boost(name, features)
+        strategy_score = strategy_ranking.get(name, 0.0)
+        fp_penalty = fp_module_penalty.get(name, 0.0)
 
-        score = 1.0 + (ai_score * 0.35) + (memory_score * 2.0) + context_boost
+        score = 1.0 + (ai_score * 0.35) + (memory_score * 2.0) + context_boost + (strategy_score * 1.6)
+        score -= fp_penalty
         score += max(0.0, 0.05 - (index * 0.002))
 
         ranked.append({
@@ -1552,6 +1693,8 @@ def build_adaptive_parallel_jobs(target_url, pages, effective_pages, auth_client
             "ai_score": round(ai_score, 3),
             "memory_score": round(memory_score, 3),
             "context_boost": round(context_boost, 3),
+            "strategy_score": round(strategy_score, 3),
+            "fp_penalty": round(fp_penalty, 3),
         })
 
     ranked.sort(key=lambda item: item["score"], reverse=True)
@@ -2862,6 +3005,67 @@ def _compute_free_scanner_target_limit(scan_mode, hosts_count, depth):
     return max(2, min(base, int(hosts_count or 0)))
 
 
+def _resolve_target_ip(target_url):
+    """
+    Resuelve la IP del target usando ping y DNS lookup.
+    Retorna (ip, hostname) o (None, None) si falla.
+    """
+    import socket
+    import subprocess
+    import platform
+    
+    try:
+        raw = str(target_url or "").strip()
+        if not raw:
+            return None, None
+
+        parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
+        hostname = (parsed.hostname or "").strip()
+        if not hostname:
+            candidate = raw.split("/", 1)[0].split(":", 1)[0].strip()
+            hostname = candidate
+        if not hostname:
+            return None, None
+
+        # Intentar ping primero para reflejar el vector operativo deseado.
+        try:
+            is_windows = platform.system().lower() == "windows"
+            ping_cmd = ["ping", "-n" if is_windows else "-c", "1", hostname]
+            result = subprocess.run(ping_cmd, capture_output=True, timeout=5, text=True)
+            
+            if result.returncode == 0:
+                output = result.stdout + result.stderr
+                # Extraer IP del output del ping
+                import re
+                match = re.search(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', output)
+                if match:
+                    ip = match.group(0)
+                    if ip != hostname:  # Si es diferente del hostname
+                        return ip, hostname
+                    return ip, hostname
+        except Exception:
+            pass
+
+        # Fallback DNS si ping no responde o está bloqueado.
+        try:
+            ip = socket.gethostbyname(hostname)
+            if ip:
+                return ip, hostname
+        except socket.gaierror:
+            pass
+        
+        # Fallback: Devolver hostname (si es IP ya)
+        try:
+            ipaddress.ip_address(hostname)
+            return hostname, hostname
+        except ValueError:
+            pass
+        
+        return None, None
+    except Exception:
+        return None, None
+
+
 def _severity_from_cvss(score):
     try:
         value = float(score or 0)
@@ -3248,12 +3452,31 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
                 commands.append(cmd_text)
         return commands[:4]
 
+    def _render_expandable_text(label, text, *, preview=220, expanded=False):
+        content = str(text or "").strip()
+        if not content:
+            return
+        if len(content) <= preview:
+            st.caption(content)
+            return
+        st.caption(f"{content[:preview]}...")
+        with st.expander(f"➕ {label}", expanded=expanded):
+            st.markdown(content)
+
     heading = "CVEs encontrados"
     if title_suffix:
         heading = f"{heading} {title_suffix}"
 
     st.markdown("---")
-    st.subheader(f"{heading} ({len(suggestions)})")
+    st.markdown(
+        (
+            '<div class="bh-cve-header">'
+            f'<div class="bh-ai-title">{heading} ({len(suggestions)})</div>'
+            '<div class="bh-ai-subtitle">Propuestas priorizadas con evidencia técnica, PoC controlado y fuentes verificadas.</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
     crit = sum(1 for s in suggestions if s.get("severity") == "critical")
     high = sum(1 for s in suggestions if s.get("severity") == "high")
@@ -3315,30 +3538,263 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
                 if sug.get("ai_analysis"):
                     ai = sug["ai_analysis"]
                     if ai.get("resumen"):
-                        st.info(f"**IA:** {ai['resumen'][:220]}...")
+                        st.markdown("**IA (resumen)**")
+                        _render_expandable_text("Ver resumen IA completo", ai.get("resumen"), preview=220)
 
             with right:
                 if sug.get("description"):
-                    st.caption(f"Descripción: {sug['description'][:220]}...")
+                    st.markdown("**Descripción técnica**")
+                    _render_expandable_text("Ver descripción completa", sug.get("description"), preview=220)
+
+                if sug.get("reasoning"):
+                    reasoning = sug.get("reasoning") or {}
+                    confidence = float(reasoning.get("exploitability_confidence", 0) or 0)
+                    st.caption(f"Confianza de explotabilidad (IA+intel): {confidence:.2f}")
+                    reasoning_steps = reasoning.get("reasoning_steps") or []
+                    for step in reasoning_steps[:3]:
+                        st.caption(f"• {step}")
+                    if len(reasoning_steps) > 3:
+                        with st.expander("➕ Ver razonamiento completo"):
+                            for step in reasoning_steps:
+                                st.markdown(f"- {step}")
 
 
                 surface_hits = sug.get("affected_surface") or []
                 best_surface = surface_hits[0] if surface_hits else None
-                st.markdown("**PoC (entorno controlado)**")
-                if best_surface and best_surface.get("url"):
-                    st.caption(
-                        f"Ruta objetivo: `{best_surface['url']}` "
-                        f"— campo: `{best_surface.get('field') or '—'}`"
-                    )
-                if sug.get("poc"):
-                    lang = "html" if str(sug["poc"]).strip().startswith("<") else "python"
-                    st.code(sug["poc"][:1200], language=lang)
-                else:
-                    st.caption("No hay PoC local para este CVE en la base offline.")
+                
+                # PoC desplegable
+                poc_content = sug.get("poc") or sug.get("malicious_script") or ""
+                has_poc = bool(poc_content and str(poc_content).strip() and not _is_generic_placeholder(poc_content))
+                poc_badge = "✅ Script disponible" if has_poc else "❌ No disponible"
+                with st.expander(f"🎯 PoC (entorno controlado) — {poc_badge}", expanded=has_poc):
+                    if best_surface and best_surface.get("url"):
+                        st.info(
+                            f"**Ruta objetivo:** `{best_surface['url']}`  \n"
+                            f"**Campo afectado:** `{best_surface.get('field') or '—'}`  \n"
+                            f"**Tipo de vector:** {best_surface.get('vector_type') or 'N/D'}"
+                        )
+                    
+                    if has_poc:
+                        lang = "html" if str(poc_content).strip().startswith("<") else "bash" if "#!/" in str(poc_content) else "python"
+                        st.code(str(poc_content), language=lang)
+                        st.caption("Script disponible para validación en entorno sandbox controlado.")
+                    else:
+                        st.warning(
+                            "⚠️ El agente IA no pudo generar un script específico para este CVE.\n\n"
+                            "**Acciones:**\n"
+                            "1. Revisar referencias oficiales más abajo\n"
+                            "2. Consultar Exploit-DB o Metasploit framework\n"
+                            "3. Ejecutar pruebas manuales en sandbox"
+                        )
+                
                 if sug.get("exploit_links"):
-                    st.markdown("**Referencias**")
+                    st.markdown("**Referencias públicas verificadas**")
                     for link in (sug.get("exploit_links") or [])[:3]:
-                        st.markdown(f"- {link}")
+                        st.markdown(f"- [Enlace]({link})" if link.startswith("http") else f"- {link}")
+
+                execution = sug.get("execution_result") or {}
+                exec_status = str(execution.get("status") or "not_run").strip().lower()
+                if exec_status in {"confirmed", "inconclusive", "error"}:
+                    exec_badge = {
+                        "confirmed": "✅ Confirmado",
+                        "inconclusive": "🟡 Indeterminado",
+                        "error": "🔴 Error",
+                    }.get(exec_status, "⚪ Desconocido")
+                    with st.expander(f"⚙️ Ejecución autónoma controlada — {exec_badge}", expanded=(exec_status=="confirmed")):
+                        st.markdown(f"**Estado:** {exec_status.upper()}")
+                        if execution.get("reason"):
+                            st.markdown(f"**Motivo/Resultado:** {str(execution.get('reason'))[:280]}")
+                        method_lines = execution.get("methodology") or []
+                        if method_lines:
+                            st.markdown("**Metodología:**")
+                            for line in method_lines[:5]:
+                                st.markdown(f"• {line}")
+                        if execution.get("output"):
+                            st.code(str(execution.get("output"))[:800], language="bash")
+
+                official_sources = sug.get("official_sources") or []
+                if official_sources:
+                    st.markdown("**Fuentes oficiales verificadas**")
+                    for src in official_sources[:3]:
+                        source_name = str(src.get("source") or "Fuente")
+                        source_url = str(src.get("url") or "")
+                        if source_url:
+                            st.markdown(f"- {source_name}: {source_url}")
+
+
+def _build_ai_attack_context(*, target_url, cves, all_results, pages, discovery):
+    """Build compact scan context for a single high-value IA triage call."""
+    sev_rank = {"Crítica": 5, "Alta": 4, "Media": 3, "Baja": 2, "Informativa": 1}
+
+    findings = []
+    for row in all_results or []:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("Resultado") or "")
+        if status not in {"Hallazgo", "Posible hallazgo", "Error"}:
+            continue
+        findings.append({
+            "module": str(row.get("Módulo") or "")[:60],
+            "control": str(row.get("Control") or "")[:120],
+            "status": status,
+            "severity": str(row.get("Severidad") or "Informativa"),
+            "confidence": float(row.get("Confianza", 0) or 0),
+            "evidence": str(row.get("Evidencia") or "")[:220],
+            "description": str(row.get("Descripción") or "")[:220],
+        })
+
+    findings = sorted(
+        findings,
+        key=lambda x: (
+            -sev_rank.get(str(x.get("severity") or "Informativa"), 1),
+            -float(x.get("confidence", 0) or 0),
+        ),
+    )[:80]
+
+    cve_rows = []
+    for c in (cves or [])[:80]:
+        cve_rows.append({
+            "id": str(c.get("id") or ""),
+            "score": float(c.get("score", 0) or 0),
+            "severity": str(c.get("severity") or ""),
+            "service": str(c.get("service") or "")[:80],
+            "version": str(c.get("version") or "")[:60],
+            "source": str(c.get("source") or "")[:40],
+            "likely_affected": bool(c.get("likely_affected", True)),
+            "description": str(c.get("description") or "")[:260],
+        })
+
+    raw_blob = " ".join(
+        str(row.get("Evidencia") or "") + " " + str(row.get("Descripción") or "")
+        for row in (all_results or [])
+        if isinstance(row, dict)
+    )[:20000]
+
+    ips = sorted(set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", raw_blob)))[:40]
+    ports = sorted(set(int(p) for p in re.findall(r"\b(?:port|puerto)\s*[:=]?\s*(\d{1,5})\b", raw_blob, re.IGNORECASE) if p.isdigit()))[:60]
+    services = sorted(set(re.findall(r"Servicio\s*:\s*([^|\n]+)", raw_blob, re.IGNORECASE)))[:30]
+
+    db_keywords = ["mysql", "postgres", "mongodb", "redis", "oracle", "mssql", "elasticsearch", "cassandra"]
+    db_hits = [k for k in db_keywords if k in raw_blob.lower()]
+
+    os_keywords = ["linux", "windows", "ubuntu", "debian", "centos", "aix", "freebsd"]
+    os_hits = [k for k in os_keywords if k in raw_blob.lower()]
+
+    pages_count = len(pages or [])
+    auth_pages = len([
+        p for p in (pages or [])
+        if str((p or {}).get("classification") or "").lower() in {"auth", "registration", "protected", "admin_candidate"}
+    ])
+
+    return {
+        "target_url": str(target_url or ""),
+        "stats": {
+            "cves_total": len(cves or []),
+            "findings_total": len(findings),
+            "pages_total": pages_count,
+            "auth_or_protected_pages": auth_pages,
+        },
+        "infra": {
+            "ips": ips,
+            "ports": ports,
+            "services": [str(s).strip()[:80] for s in services],
+            "databases": db_hits,
+            "operating_system_hints": os_hits,
+        },
+        "cves": cve_rows,
+        "findings": findings,
+        "discovery_summary": {
+            "keys": sorted(list((discovery or {}).keys()))[:20] if isinstance(discovery, dict) else [],
+        },
+    }
+
+
+def _ai_prioritize_cves_with_context(*, target_url, cves, all_results, pages, discovery, llm_provider):
+    """
+    Single LLM triage call to reduce noise/cost before exploit generation.
+    Returns (filtered_cves, triage_meta).
+    """
+    triage_meta = {
+        "used": False,
+        "input_cves": len(cves or []),
+        "selected_cves": len(cves or []),
+        "dropped_cves": 0,
+        "focus_ids": [],
+        "notes": [],
+    }
+    if not cves:
+        return [], triage_meta
+
+    try:
+        from scanner.ai_agent.providers import call_llm_json
+    except Exception:
+        return cves, triage_meta
+
+    context_payload = _build_ai_attack_context(
+        target_url=target_url,
+        cves=cves,
+        all_results=all_results,
+        pages=pages,
+        discovery=discovery,
+    )
+
+    prompt = (
+        "Eres un analista ofensivo senior orientado a coste y precision. "
+        "Debes reducir ruido y falsos positivos potenciales antes de generar exploits.\n\n"
+        "TAREA:\n"
+        "1) Analiza TODO el contexto tecnico consolidado del escaneo.\n"
+        "2) Elimina CVEs de baja prioridad/ruido/no explotables en este objetivo.\n"
+        "3) Conserva solo CVEs accionables para atacante real.\n"
+        "4) Devuelve maximo 12 CVEs priorizados.\n"
+        "5) Incluye notas de por que descartas ruido.\n\n"
+        "RESPONDE SOLO JSON VALIDO con este formato:\n"
+        "{\n"
+        "  \"selected_cves\": [{\"cve_id\":\"CVE-...\",\"priority\":0-100,\"reason\":\"...\"}],\n"
+        "  \"dropped_cves\": [{\"cve_id\":\"CVE-...\",\"reason\":\"...\"}],\n"
+        "  \"noise_summary\": [\"...\", \"...\"],\n"
+        "  \"attacker_focus\": [\"...\", \"...\"]\n"
+        "}\n\n"
+        f"CONTEXTO JSON:\n{json.dumps(context_payload, ensure_ascii=False)}"
+    )
+
+    ai_data = call_llm_json(prompt, provider=llm_provider)
+    if not isinstance(ai_data, dict):
+        return cves, triage_meta
+
+    selected = ai_data.get("selected_cves") or []
+    if not isinstance(selected, list) or not selected:
+        return cves, triage_meta
+
+    selected_ids_ranked = []
+    for row in selected:
+        if not isinstance(row, dict):
+            continue
+        cve_id = str(row.get("cve_id") or "").strip().upper()
+        if not cve_id:
+            continue
+        try:
+            priority = float(row.get("priority", 0) or 0)
+        except Exception:
+            priority = 0.0
+        selected_ids_ranked.append((cve_id, priority))
+
+    if not selected_ids_ranked:
+        return cves, triage_meta
+
+    selected_ids_ranked.sort(key=lambda x: x[1], reverse=True)
+    selected_ids = [cve_id for cve_id, _ in selected_ids_ranked[:12]]
+
+    cve_map = {str(c.get("id") or "").strip().upper(): c for c in (cves or [])}
+    filtered = [cve_map[cve_id] for cve_id in selected_ids if cve_id in cve_map]
+    if not filtered:
+        return cves, triage_meta
+
+    triage_meta["used"] = True
+    triage_meta["selected_cves"] = len(filtered)
+    triage_meta["dropped_cves"] = max(0, len(cves or []) - len(filtered))
+    triage_meta["focus_ids"] = [str(c.get("id") or "") for c in filtered[:3]]
+    triage_meta["notes"] = [str(x)[:140] for x in (ai_data.get("noise_summary") or [])[:3]]
+    return filtered, triage_meta
 
 
 def _render_cve_findings_panel(*, cves, target_url, pages=None, enable_exploit_ai, exploit_ai_model, max_items=12):
@@ -3353,8 +3809,9 @@ def _render_cve_findings_panel(*, cves, target_url, pages=None, enable_exploit_a
         suggestions = build_exploit_suggestions(
             cves=actionable[:max_items],
             target_url=target_url,
-            ollama_model=exploit_ai_model,
-            use_ollama=bool(enable_exploit_ai),
+            llm_provider=str(st.session_state.get("_exploit_ai_provider", "azure_openai") or "azure_openai"),
+            llm_model=exploit_ai_model,
+            use_llm=bool(enable_exploit_ai),
             max_ai_queries=5 if enable_exploit_ai else 0,
         )
     except Exception:
@@ -3605,6 +4062,109 @@ def _scan_phase1(
                 description="Error durante el crawling inicial.",
                 evidence=traceback.format_exc(),
                 recommendation="Revisar conectividad, DNS, certificados SSL/TLS y bloqueos WAF.",
+            )]))
+
+    with st.spinner("Exploración dinámica de navegación (navbar/enlaces)..."):
+        nav_rows = []
+        try:
+            _known_surface = {
+                _canonical_surface_url(p.get("final_url") or p.get("url"))
+                for p in (crawler_pages or [])
+            }
+            _known_surface.discard("")
+
+            nav_result = discover_navbar_routes(
+                start_url=target_url,
+                known_urls=list(_known_surface),
+                max_clicks=24 if is_aggressive_mode else 14,
+                timeout_ms=8500,
+                headless=True,
+            )
+
+            nav_routes = list(nav_result.get("routes") or [])
+            nav_new_routes = [r for r in nav_routes if bool(r.get("is_new"))]
+
+            _parsed_origin = urlparse(target_url)
+            _origin_base = f"{_parsed_origin.scheme}://{_parsed_origin.netloc}"
+            _nav_baseline = get_soft404_baseline(auth_client, _origin_base)
+
+            nav_pages = []
+            for route in nav_new_routes[:40]:
+                route_url = str(route.get("url") or "").strip()
+                if not route_url:
+                    continue
+
+                try:
+                    nav_resp = auth_client.get(route_url)
+                except Exception:
+                    continue
+
+                nav_status = int(getattr(nav_resp, "status_code", 0) or 0)
+                if nav_status == 404:
+                    continue
+
+                nav_final_url = str(nav_resp.url or route_url)
+                nav_page = {
+                    "url": route_url,
+                    "final_url": nav_final_url,
+                    "status_code": nav_status,
+                    "content_type": nav_resp.headers.get("Content-Type", ""),
+                    "html": nav_resp.text or "",
+                    "forms": [],
+                    "classification": classify_discovery_url(
+                        route_url,
+                        nav_final_url,
+                        nav_resp,
+                        baseline=_nav_baseline,
+                    ),
+                }
+
+                if _looks_like_not_found_page(nav_page) or is_blocked_or_error_page(nav_page):
+                    continue
+
+                nav_pages.append(nav_page)
+
+            if nav_pages:
+                crawler_pages = dedupe_pages_by_url((crawler_pages or []) + nav_pages)
+
+            if nav_result.get("executed"):
+                nav_rows.append({
+                    "control": "Exploración dinámica de navegación",
+                    "status": "Detectado" if nav_new_routes else "No evidenciado",
+                    "severity": "Informativa",
+                    "description": "Navegación en navegador para descubrir rutas no visibles por diccionario/crawl estático.",
+                    "evidence": (
+                        f"Controles navegados: {min(len(nav_routes), 24 if is_aggressive_mode else 14)} | "
+                        f"Rutas detectadas: {len(nav_routes)} | "
+                        f"Rutas nuevas: {len(nav_new_routes)} | "
+                        f"Rutas nuevas válidas añadidas: {len(nav_pages)}"
+                    ),
+                    "recommendation": "Priorizar en fase ofensiva solo rutas nuevas válidas y en contexto autenticado cuando aplique.",
+                })
+
+                for item in nav_pages[:8]:
+                    nav_rows.append({
+                        "control": "Ruta nueva descubierta por navegación dinámica",
+                        "status": "Detectado",
+                        "severity": "Informativa",
+                        "description": "Ruta adicional detectada por interacción de UI (navbar/enlace/botón).",
+                        "evidence": (
+                            f"URL: {item.get('final_url') or item.get('url')} | "
+                            f"HTTP: {item.get('status_code')} | "
+                            f"Clasificación: {item.get('classification')}"
+                        ),
+                        "recommendation": "Validar manualmente permisos y comportamiento funcional antes de pruebas destructivas.",
+                    })
+
+            if nav_rows:
+                all_results.extend(normalize_results("Navegación dinámica", nav_rows))
+
+        except Exception:
+            all_results.extend(normalize_results("Navegación dinámica", [pipeline_error_result(
+                control="Exploración dinámica de navegación",
+                description="No se pudo completar la exploración de navbar/enlaces en navegador.",
+                evidence=traceback.format_exc()[:280],
+                recommendation="Verificar Playwright/navegador y reintentar en modo headless con permisos de red.",
             )]))
 
     with st.spinner("Discovery activo con diccionario de rutas comunes..."):
@@ -4078,7 +4638,22 @@ def _scan_phase1(
             "recommendation": "Mantener análisis web y ampliar discovery de subdominios/activos cuando corresponda.",
         }]))
 
-    if enable_nmap and external_target_limit > 0:
+    # Resolver IP del target principal si no hay external_hosts para Nmap
+    target_ip_for_nmap = None
+    if enable_nmap and (not external_hosts or external_target_limit == 0):
+        target_ip, target_hostname = _resolve_target_ip(target_url)
+        if target_ip:
+            target_ip_for_nmap = target_ip
+            st.info(f"🔍 Resuelto target principal: {target_hostname} → {target_ip}")
+
+    # Compilar targets para Nmap: primero external_hosts, luego IP resuelta del target
+    nmap_targets = []
+    if external_hosts and external_target_limit > 0:
+        nmap_targets = external_hosts[:external_target_limit]
+    elif target_ip_for_nmap:
+        nmap_targets = [target_ip_for_nmap]
+
+    if enable_nmap and nmap_targets:
         import queue as _queue
         _nmap_queue: _queue.SimpleQueue = _queue.SimpleQueue()
         nmap_status = st.empty()
@@ -4091,9 +4666,9 @@ def _scan_phase1(
             except Exception:
                 pass
 
-        with st.spinner("Ejecutando Nmap avanzado..."):
+        with st.spinner(f"Ejecutando Nmap avanzado en {len(nmap_targets)} target(s)..."):
             nmap_rows, nmap_structured = run_nmap_recon(
-                targets=external_hosts[:external_target_limit],
+                targets=nmap_targets,
                 profile=nmap_profile,
                                nmap_path=nmap_bin,
                 timeout_seconds=int(nmap_timeout_seconds or 420),
@@ -4763,6 +5338,7 @@ if run_scan:
     st.session_state["_target_url"] = target_url
     st.session_state["_sqli_intensity"] = sqli_intensity
     st.session_state["_enable_exploit_ai"] = enable_exploit_ai
+    st.session_state["_exploit_ai_provider"] = exploit_ai_provider
     st.session_state["_exploit_ai_model"] = exploit_ai_model
     st.session_state["_authorized_engagement"] = True
     st.session_state["_offensive_scope_ack"] = True
@@ -4802,14 +5378,8 @@ if run_scan:
     st.session_state["phase1_state"] = state
     st.session_state["phase2_done"] = False
 
-    _render_phase1_summary(state)
-
-
     partial_df = pd.DataFrame(state["all_results"])
     st.session_state["last_audit_df"] = partial_df
-
-    st.markdown("---")
-    st.success(f"Reconocimiento completado. Páginas: {len(state['pages'])} | Atacables: {len(state['attackable_pages'])} | Auth targets: {len(state['auth_attack_pages'])}")
 
     st.rerun()
 
@@ -4830,12 +5400,30 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
         target_url=target_url,
         pages=pages,
         enable_exploit_ai=bool(st.session_state.get("_enable_exploit_ai", True)),
-        exploit_ai_model=str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3"),
+        exploit_ai_model=str(st.session_state.get("_exploit_ai_model", "gpt-4o-mini") or "gpt-4o-mini"),
     )
 
 
     attackable_pages_preview = state.get("attackable_pages") or []
     auth_attack_pages_preview = state.get("auth_attack_pages") or []
+    phase2_attack_strategy = state.get("phase2_attack_strategy") or {}
+
+    if not phase2_attack_strategy:
+        try:
+            strategy_orchestrator = AdaptiveOrchestrator()
+            phase2_attack_strategy = strategy_orchestrator.build_phase2_attack_strategy(
+                target_url=target_url,
+                pages=pages,
+                discovery=discovery,
+                phase1_results=all_results,
+                phase_state=state,
+                strict_fp_mode=bool(state.get("strict_fp_mode", True)),
+                max_vectors=28,
+            )
+            state["phase2_attack_strategy"] = phase2_attack_strategy
+            st.session_state["phase1_state"] = state
+        except Exception:
+            phase2_attack_strategy = {}
 
     st.markdown("---")
     st.markdown("### Objetivos identificados para ataque ofensivo")
@@ -4877,6 +5465,21 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                     st.caption(f"… y {len(auth_attack_pages_preview) - 30} más")
         else:
             st.info("Sin targets de autenticación detectados.")
+
+    if phase2_attack_strategy:
+        with st.expander("Estrategia IA fase ofensiva (contexto completo)", expanded=False):
+            st.caption(
+                "Plan generado a partir de toda la fase inicial: resultados técnicos, discovery, "
+                "contexto de autenticación, Nmap/Nessus/CVEs y superficie de endpoints."
+            )
+            st.json({
+                "audit_scope_policy": phase2_attack_strategy.get("audit_scope_policy", {}),
+                "signals": phase2_attack_strategy.get("signals", {}),
+                "attack_surface_summary": phase2_attack_strategy.get("attack_surface_summary", {}),
+                "ranked_modules": phase2_attack_strategy.get("ranked_modules", [])[:12],
+                "attack_vectors_preview": phase2_attack_strategy.get("attack_vectors", [])[:6],
+                "false_positive_candidates": phase2_attack_strategy.get("false_positive_candidates", [])[:8],
+            })
 
     st.markdown("---")
     run_offensive = st.button("Lanzar ataques ofensivos", type="primary")
@@ -4974,6 +5577,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             effective_pages=effective_pages,
             auth_client=auth_client,
             scan_payload_limit=scan_payload_limit,
+            ai_strategy=phase2_attack_strategy,
         )
         parallel_jobs, ranked_plan = reprioritize_for_authenticated_session(
             parallel_jobs,
@@ -4996,9 +5600,12 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                         "ai_score": item["ai_score"],
                         "memory_score": item["memory_score"],
                         "context_boost": item["context_boost"],
+                        "strategy_score": item.get("strategy_score", 0.0),
+                        "fp_penalty": item.get("fp_penalty", 0.0),
                     }
                     for item in ranked_plan
                 ],
+                "strategy_vectors": (phase2_attack_strategy.get("attack_vectors") or [])[:6],
             })
 
         parallel_status = st.empty()
@@ -5065,9 +5672,14 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                         f"Último: {name} | presión defensiva: {pressure} | ventana: {window}"
                     )
 
+        pressure_msg = (
+            f"sin señales de defensa detectadas"
+            if max_pressure == 0
+            else f"presión defensiva observada: {max_pressure}"
+        )
         parallel_status.success(
-            f"Módulos ofensivos HTTP completados ({len(parallel_jobs)}). "
-            f"Pico de presión defensiva observado: {max_pressure}."
+            f"✅ Módulos ofensivos HTTP completados ({len(parallel_jobs)}). "
+            f"({pressure_msg})"
         )
 
         all_results.extend(normalize_results("Orquestación ofensiva", [{
@@ -5077,7 +5689,7 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
             "description": "La ejecución paralela ajustó dinámicamente la concurrencia ante señales de WAF/rate-limit.",
             "evidence": (
                 f"Módulos planificados: {len(parallel_jobs)} | "
-                f"Pico presión defensiva: {max_pressure} | "
+                f"Señales defensivas: {max_pressure} | "
                 f"Modo estricto anti-FP: {bool(strict_fp_mode)}"
             ),
             "recommendation": "Mantener modo adaptativo para reducir falsos negativos por bloqueo temporal o rate limiting.",
@@ -5161,20 +5773,96 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
     if _cves_fallback_from_results:
         _cves_for_exploits = _dedupe_cves_by_best_score(_cves_for_exploits + _cves_fallback_from_results)
     _exploit_ai_enabled = bool(st.session_state.get("_enable_exploit_ai", True))
-    _exploit_ai_model = str(st.session_state.get("_exploit_ai_model", "llama3") or "llama3")
+    _exploit_ai_provider = str(st.session_state.get("_exploit_ai_provider", "azure_openai") or "azure_openai")
+    _exploit_ai_model = str(st.session_state.get("_exploit_ai_model", "gpt-4o-mini") or "gpt-4o-mini")
 
     if _cves_for_exploits and _exploit_ai_enabled:
         try:
             from scanner.exploit_suggester import build_exploit_suggestions
-            with st.spinner("Agente IA analizando CVEs y generando propuestas de exploits..."):
-                exploit_suggestions = build_exploit_suggestions(
-                    cves=_cves_for_exploits,
-                    target_url=target_url,
-                    ollama_model=_exploit_ai_model,
-                    use_ollama=True,
-                    max_ai_queries=5,
+
+            triage_cves, triage_meta = _ai_prioritize_cves_with_context(
+                target_url=target_url,
+                cves=_cves_for_exploits,
+                all_results=all_results,
+                pages=pages,
+                discovery=discovery,
+                llm_provider=_exploit_ai_provider,
+            )
+            _cves_for_exploits = triage_cves or _cves_for_exploits
+
+            st.markdown("---")
+            st.markdown(
+                (
+                    '<div class="bh-ai-header">'
+                    '<div class="bh-ai-title">Agente IA · Propuesta de Exploits</div>'
+                    f'<div class="bh-ai-subtitle">Proveedor: {_exploit_ai_provider.replace("_", " ").title()} ({_exploit_ai_model}) · CVEs detectados: {len(_cves_for_exploits)}</div>'
+                    '</div>'
+                ),
+                unsafe_allow_html=True,
+            )
+
+            if triage_meta.get("used"):
+                notes = triage_meta.get("notes") or []
+                notes_txt = " | ".join(notes) if notes else "Ruido técnico reducido por priorización contextual."
+                st.markdown(
+                    (
+                        '<div class="bh-ai-status">'
+                        f'Triage IA aplicado · CVEs entrada: {triage_meta.get("input_cves", 0)} · '
+                        f'CVEs priorizados: {triage_meta.get("selected_cves", 0)} · '
+                        f'Descartados por ruido/menor valor: {triage_meta.get("dropped_cves", 0)}'
+                        f'<br><span style="color:#94A3B8">{notes_txt}</span>'
+                        '</div>'
+                    ),
+                    unsafe_allow_html=True,
                 )
 
+            _sorted_cves = sorted(
+                list(_cves_for_exploits or []),
+                key=lambda c: float((c or {}).get("score", 0) or 0),
+                reverse=True,
+            )
+            _total_cves = len(_sorted_cves)
+            _max_ai_queries = min(3, _total_cves)
+
+            focus_ids = set(str(x).strip().upper() for x in (triage_meta.get("focus_ids") or []))
+            if focus_ids:
+                focused = [c for c in _sorted_cves if str(c.get("id") or "").strip().upper() in focus_ids]
+                non_focused = [c for c in _sorted_cves if str(c.get("id") or "").strip().upper() not in focus_ids]
+                _sorted_cves = focused + non_focused
+
+            exploit_suggestions = []
+            ai_used_count = 0
+            progress_bar = st.progress(0, text="⏱️ Inicializando agente IA...")
+            status_box = st.empty()
+            status_box.markdown('<div class="bh-ai-status">Fase 1/3 · Preparando análisis de CVEs...</div>', unsafe_allow_html=True)
+
+            status_box.markdown('<div class="bh-ai-status">Fase 2/3 · Enriquecimiento IA en curso...</div>', unsafe_allow_html=True)
+            for idx, cve_item in enumerate(_sorted_cves, start=1):
+                cve_id = str((cve_item or {}).get("id", "CVE-desconocido") or "CVE-desconocido")
+                pct = int(((idx - 1) / max(_total_cves, 1)) * 100)
+                progress_bar.progress(
+                    pct,
+                    text=(
+                        f"⏱️ [{idx}/{_total_cves}] Analizando {cve_id} "
+                        f"(IA activa: {'sí' if idx <= _max_ai_queries else 'no'})"
+                    ),
+                )
+
+                chunk = build_exploit_suggestions(
+                    cves=[cve_item],
+                    target_url=target_url,
+                    llm_provider=_exploit_ai_provider,
+                    llm_model=_exploit_ai_model,
+                    use_llm=bool(idx <= _max_ai_queries),
+                    max_ai_queries=1,
+                )
+
+                if chunk:
+                    exploit_suggestions.extend(chunk)
+                    ai_used_count += sum(1 for s in chunk if s.get("ai_used"))
+
+            progress_bar.progress(90, text="⏱️ Fase 3/3: Mapeando superficie afectada...")
+            status_box.markdown('<div class="bh-ai-status">Fase 3/3 · Correlación de superficie y cierre de propuestas...</div>', unsafe_allow_html=True)
             _phase2_pages = state.get("pages") or pages or []
             if exploit_suggestions and _phase2_pages:
                 try:
@@ -5182,15 +5870,24 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
                     enrich_suggestions_with_surface(exploit_suggestions, _phase2_pages, target_url=target_url)
                 except Exception:
                     pass
+
+            progress_bar.progress(100, text="✅ Proceso IA finalizado")
+            status_box.empty()
+
             st.session_state["last_exploit_suggestions"] = exploit_suggestions
 
+            # Resultado
             if exploit_suggestions:
                 _render_exploit_suggestions_panel(
                     exploit_suggestions,
-                    title_suffix=f"— propuesta de exploits ({'IA' if any(s.get('ai_used') for s in exploit_suggestions) else 'offline'})",
+                    title_suffix=f"— {len(exploit_suggestions)} propuesta(s) IA ({'Azure OpenAI' if _exploit_ai_provider == 'azure_openai' else _exploit_ai_provider})",
                 )
+            else:
+                st.info("ℹ️ No se generaron propuestas de exploit para los CVEs detectados.")
         except Exception as _exp_err:
-            st.warning(f"⚠️ Error en agente de exploits: {str(_exp_err)[:200]}")
+            st.error(f"❌ Error en agente de exploits: {str(_exp_err)[:220]}")
+            import traceback
+            st.caption(f"Detalle: {traceback.format_exc()[:500]}")
     elif _exploit_ai_enabled and not _cves_for_exploits:
         st.info("ℹ️ El agente IA de exploits no encontró CVEs en esta auditoría. Activa BlackHarrier Scanner para buscar vulnerabilidades en servicios de red.")
 
@@ -5366,15 +6063,19 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
 
     full_bundle_path = ""
     try:
-        full_bundle_path = _export_full_scan_bundle(
-            audit_name=audit_name,
-            target_url=target_url,
-            scan_mode=scan_mode,
-            all_results=all_results,
-            pages=pages,
-            discovery=discovery,
-            phase_state=state,
-        )
+        # Fase 1: Consolidación
+        with st.spinner("📦 Fase 1/2: Consolidando bundle completo de resultados técnicos..."):
+            import time
+            full_bundle_path = _export_full_scan_bundle(
+                audit_name=audit_name,
+                target_url=target_url,
+                scan_mode=scan_mode,
+                all_results=all_results,
+                pages=pages,
+                discovery=discovery,
+                phase_state=state,
+            )
+            time.sleep(0.2)
         st.session_state["last_full_bundle_path"] = full_bundle_path
     except Exception:
         st.session_state["last_full_bundle_path"] = ""
@@ -5387,23 +6088,31 @@ elif st.session_state.get("phase1_state") and not st.session_state.get("phase2_d
 
     report_path = None
     try:
-        report_path = generate_word_report(
-            audit_name=audit_name,
-            target_url=target_url,
-            results=all_results,
-            pages=pages,
-            discovery=discovery,
-            pages_count=len(pages),
-            scan_mode=scan_mode,
-            auth_cookie_details=state.get("auth_cookie_details") or [],
-            full_bundle_path=full_bundle_path,
-        )
+        # Fase 2: Generación de reporte
+        with st.spinner("📄 Fase 2/2: Generando informe Word (estructura, tablas, CVE details)..."):
+            nmap_output = state.get("nmap_structured", {}).get("raw_output")
+            nmap_structured_data = state.get("nmap_structured") or {}
+            report_path = generate_word_report(
+                audit_name=audit_name,
+                target_url=target_url,
+                results=all_results,
+                pages=pages,
+                discovery=discovery,
+                pages_count=len(pages),
+                scan_mode=scan_mode,
+                auth_cookie_details=state.get("auth_cookie_details") or [],
+                full_bundle_path=full_bundle_path,
+                nmap_output=nmap_output,
+                nmap_structured=nmap_structured_data,
+            )
+            import time
+            time.sleep(0.2)
         st.session_state["last_report_path"] = report_path
         st.session_state["last_report_bytes"] = _get_report_bytes_if_available(report_path)
     except Exception:
         report_trace = traceback.format_exc()
-        st.error("No se pudo generar el informe Word. Revisa logs y dependencias de reportes.")
-        st.caption(f"Detalle técnico: {report_trace.splitlines()[-1] if report_trace else 'Error no identificado'}")
+        st.error("❌ Error generando informe Word. Revisa logs y dependencias.")
+        st.caption(f"Detalle: {report_trace.splitlines()[-1] if report_trace else 'Error desconocido'}")
         st.session_state["last_report_error"] = report_trace
         try:
             os.makedirs("logs", exist_ok=True)

@@ -206,6 +206,19 @@ _COMMON_THIRD_PARTY_HINTS = (
 )
 
 
+def _cloud_classification(host: str) -> dict:
+    value = str(host or "").strip().lower()
+    if not value:
+        return {"provider": "unknown", "environment": "unknown"}
+    if "amazonaws" in value or "ec2-" in value or "elb.amazonaws.com" in value:
+        return {"provider": "aws", "environment": "ec2/elb"}
+    if "azure" in value or "azureedge" in value or "windows.net" in value:
+        return {"provider": "azure", "environment": "azure-service"}
+    if "googleusercontent" in value or "googleapis" in value or "gcp" in value:
+        return {"provider": "gcp", "environment": "gcp-service"}
+    return {"provider": "unknown", "environment": "unknown"}
+
+
 _DB_SERVICE_HINTS = {
     "mysql": "MySQL",
     "mariadb": "MariaDB",
@@ -375,6 +388,7 @@ def build_asset_intel_rows(*, target_url: str, external_targets: dict, nmap_data
     classified_hosts = []
     for host in hosts:
         cls = _owner_classification(host, base_domain)
+        cloud = _cloud_classification(host)
         owner = str(cls.get("owner") or "unknown")
         if owner not in ownership_counts:
             owner = "unknown"
@@ -383,6 +397,8 @@ def build_asset_intel_rows(*, target_url: str, external_targets: dict, nmap_data
             "host": str(host),
             "owner": owner,
             "confidence": float(cls.get("confidence", 0.0) or 0.0),
+            "cloud_provider": cloud.get("provider", "unknown"),
+            "cloud_environment": cloud.get("environment", "unknown"),
             "reason": str(cls.get("reason") or ""),
         })
 
@@ -465,12 +481,13 @@ def build_asset_intel_rows(*, target_url: str, external_targets: dict, nmap_data
     for host_obj in classified_hosts:
         if host_obj["owner"] == "unknown" and host_obj["confidence"] < 0.6:
             continue
+        cloud_bonus = 0.8 if host_obj.get("cloud_provider") in {"aws", "azure", "gcp"} else 0.0
         candidate_targets.append({
             "target": host_obj["host"],
             "kind": "related-host",
             "owner": host_obj["owner"],
-            "priority_score": round(6.0 * host_obj["confidence"], 1),
-            "reason": host_obj["reason"],
+            "priority_score": round((6.0 * host_obj["confidence"]) + cloud_bonus, 1),
+            "reason": host_obj["reason"] + (f" | cloud={host_obj.get('cloud_provider')}/{host_obj.get('cloud_environment')}" if host_obj.get("cloud_provider") != "unknown" else ""),
         })
 
     for url in (external_targets or {}).get("sensitive_endpoints") or []:
