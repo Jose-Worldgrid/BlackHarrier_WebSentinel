@@ -3577,7 +3577,6 @@ def _render_exploit_suggestions_panel(suggestions, *, title_suffix=""):
                     if has_poc:
                         lang = "html" if str(poc_content).strip().startswith("<") else "bash" if "#!/" in str(poc_content) else "python"
                         st.code(str(poc_content), language=lang)
-                        st.caption("Script disponible para validación en entorno sandbox controlado.")
                     else:
                         st.warning(
                             "⚠️ El agente IA no pudo generar un script específico para este CVE.\n\n"

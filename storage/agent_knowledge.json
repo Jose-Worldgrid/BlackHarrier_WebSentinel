@@ -3,13 +3,13 @@
   "attack_effectiveness": {
     "unknown": {
       "Puertos y servicios": {
-        "attempts": 5,
+        "attempts": 7,
         "successes": 0,
         "partials": 0,
-        "failures": 5,
+        "failures": 7,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.835107",
+        "last_used": "2026-06-29T10:05:18.886467",
         "payloads_used": [
           {
             "payload": "",
@@ -40,17 +40,29 @@
             "result": "Media",
             "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
             "timestamp": "2026-06-17T13:57:58.835123"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-29T09:32:11.222430"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Servicios expuestos que requieren hardening y restricción de acceso.",
+            "timestamp": "2026-06-29T10:05:18.886481"
           }
         ]
       },
       "Correlación de vulnerabilidades": {
-        "attempts": 30,
+        "attempts": 84,
         "successes": 0,
         "partials": 0,
-        "failures": 30,
+        "failures": 84,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.851601",
+        "last_used": "2026-06-29T14:03:13.080284",
         "payloads_used": [
           {
             "payload": "",
@@ -231,17 +243,341 @@
             "result": "Baja",
             "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
             "timestamp": "2026-06-17T13:57:58.851613"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-22T12:39:10.443007"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-22T12:39:10.450271"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-22T12:39:10.455943"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-22T12:39:10.463248"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-22T12:39:10.468897"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-22T12:39:10.481798"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-22T13:42:47.032949"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-22T13:42:47.046130"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-22T13:42:47.055964"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-22T13:42:47.064368"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-22T13:42:47.070428"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-22T13:42:47.079790"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-22T14:24:33.205744"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-22T14:24:33.215105"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-22T14:24:33.223363"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-22T14:24:33.230254"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-22T14:24:33.236726"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-22T14:24:33.244153"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-29T09:32:11.227281"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-29T09:32:11.231085"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-29T09:32:11.234965"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-29T09:32:11.239411"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-29T09:32:11.243577"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-29T09:32:11.247180"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-29T10:05:18.890483"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-29T10:05:18.895190"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-29T10:05:18.899201"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-29T10:05:18.903835"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-29T10:05:18.908056"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-29T10:05:18.914277"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-29T12:31:18.383614"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-29T12:31:18.395671"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-29T12:31:18.406552"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-29T12:31:18.419468"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-29T12:31:18.428745"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-29T12:31:18.441454"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-29T13:07:16.893903"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-29T13:07:16.907426"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-29T13:07:16.918097"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-29T13:07:16.931135"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-29T13:07:16.940336"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-29T13:07:16.952182"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-29T13:36:42.122968"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-29T13:36:42.128834"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-29T13:36:42.137667"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-29T13:36:42.146721"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-29T13:36:42.153780"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-29T13:36:42.160274"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Frame-Options ausente — riesgo de clickjacking",
+            "timestamp": "2026-06-29T14:03:13.021165"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "X-Content-Type-Options ausente — riesgo MIME sniffing",
+            "timestamp": "2026-06-29T14:03:13.030876"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Permissions-Policy ausente — sin control de APIs del navegador",
+            "timestamp": "2026-06-29T14:03:13.041555"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Referrer-Policy ausente — el navegador puede filtrar URLs internas en Referer",
+            "timestamp": "2026-06-29T14:03:13.051034"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Embedder-Policy ausente",
+            "timestamp": "2026-06-29T14:03:13.067359"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Cross-Origin-Resource-Policy ausente — recursos cargables desde otros orígenes",
+            "timestamp": "2026-06-29T14:03:13.080316"
           }
         ]
       },
       "Inteligencia CVE abierta": {
-        "attempts": 125,
+        "attempts": 175,
         "successes": 0,
         "partials": 0,
-        "failures": 125,
+        "failures": 175,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.934214",
+        "last_used": "2026-06-29T10:05:19.026232",
         "payloads_used": [
           {
             "payload": "",
@@ -992,17 +1328,317 @@
             "result": "Media",
             "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
             "timestamp": "2026-06-17T13:57:58.934224"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.250716"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.254656"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.258633"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.263530"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.268550"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.273678"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.278855"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.283905"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.287172"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.291022"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.295347"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.299347"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.303127"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.307576"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.311081"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.314779"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.318861"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.322108"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.325240"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.328540"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.331781"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.335010"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.338139"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.341290"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T09:32:11.344601"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.918945"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.923309"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.931357"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.934944"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.939554"
+          },
+          {
+            "payload": "",
+            "result": "Crítica",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.945649"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.949768"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.953223"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.956609"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.960983"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.964735"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.968754"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.972251"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.976006"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.979430"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.983507"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.988285"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.993489"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:18.997935"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:19.002407"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:19.006765"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:19.012356"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:19.016728"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:19.021364"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "CVE priorizado por señal combinada CVSS + EPSS + KEV.",
+            "timestamp": "2026-06-29T10:05:19.026250"
           }
         ]
       },
       "TLS/HTTPS": {
-        "attempts": 5,
+        "attempts": 14,
         "successes": 0,
         "partials": 0,
-        "failures": 5,
+        "failures": 14,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.937966",
+        "last_used": "2026-06-29T14:03:13.090773",
         "payloads_used": [
           {
             "payload": "",
@@ -1033,17 +1669,71 @@
             "result": "Alta",
             "reason": "El objetivo no usa HTTPS.",
             "timestamp": "2026-06-17T13:57:58.937980"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-22T12:39:10.487423"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-22T13:42:47.085840"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-22T14:24:33.249874"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-29T09:32:11.347286"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-29T10:05:19.030719"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-29T12:31:18.450234"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-29T13:07:16.961753"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-29T13:36:42.169205"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "El objetivo no usa HTTPS.",
+            "timestamp": "2026-06-29T14:03:13.090806"
           }
         ]
       },
       "Cabeceras de seguridad": {
-        "attempts": 20,
+        "attempts": 56,
         "successes": 0,
         "partials": 0,
-        "failures": 20,
+        "failures": 56,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.952274",
+        "last_used": "2026-06-29T14:03:13.130669",
         "payloads_used": [
           {
             "payload": "",
@@ -1164,17 +1854,233 @@
             "result": "Baja",
             "reason": "Ausencia de Permissions-Policy.",
             "timestamp": "2026-06-17T13:57:58.952286"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-22T12:39:10.496055"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-22T12:39:10.505083"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-22T12:39:10.511974"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-22T12:39:10.518186"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-22T13:42:47.093918"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-22T13:42:47.100624"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-22T13:42:47.109957"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-22T13:42:47.116463"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-22T14:24:33.256638"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-22T14:24:33.262772"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-22T14:24:33.269455"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-22T14:24:33.277858"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-29T09:32:11.350876"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-29T09:32:11.354045"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-29T09:32:11.357452"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-29T09:32:11.361359"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-29T10:05:19.033943"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-29T10:05:19.037937"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-29T10:05:19.042330"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-29T10:05:19.047929"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-29T12:31:18.461230"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-29T12:31:18.469315"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-29T12:31:18.478681"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-29T12:31:18.488743"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-29T13:07:16.975067"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-29T13:07:16.990648"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-29T13:07:17.002340"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-29T13:07:17.014530"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-29T13:36:42.178305"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-29T13:36:42.187103"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-29T13:36:42.195300"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-29T13:36:42.203581"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a clickjacking.",
+            "timestamp": "2026-06-29T14:03:13.098329"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Ausencia de protección frente a MIME sniffing.",
+            "timestamp": "2026-06-29T14:03:13.111992"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de política de referer.",
+            "timestamp": "2026-06-29T14:03:13.124705"
+          },
+          {
+            "payload": "",
+            "result": "Baja",
+            "reason": "Ausencia de Permissions-Policy.",
+            "timestamp": "2026-06-29T14:03:13.130685"
           }
         ]
       },
       "Pipeline externo OSS": {
-        "attempts": 15,
+        "attempts": 40,
         "successes": 0,
         "partials": 0,
-        "failures": 15,
+        "failures": 40,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.962125",
+        "last_used": "2026-06-29T14:03:13.168165",
         "payloads_used": [
           {
             "payload": "",
@@ -1265,17 +2171,167 @@
             "result": "Informativa",
             "reason": "Hallazgo detectado por template externo de seguridad.",
             "timestamp": "2026-06-17T13:57:58.962135"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T12:39:10.524400"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T12:39:10.531297"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T13:42:47.128624"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T13:42:47.137415"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T13:42:47.146368"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T14:24:33.284423"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-22T14:24:33.291595"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T09:32:11.365177"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T09:32:11.368327"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T09:32:11.371491"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T10:05:19.051954"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T10:05:19.056305"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T10:05:19.060253"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T12:31:18.500775"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T12:31:18.511924"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T12:31:18.521078"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T13:07:17.024529"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T13:07:17.032318"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T13:07:17.041473"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T13:36:42.209525"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T13:36:42.219650"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T13:36:42.225809"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T14:03:13.141122"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T14:03:13.154700"
+          },
+          {
+            "payload": "",
+            "result": "Informativa",
+            "reason": "Hallazgo detectado por template externo de seguridad.",
+            "timestamp": "2026-06-29T14:03:13.168191"
           }
         ]
       },
       "XSS DOM": {
-        "attempts": 25,
+        "attempts": 70,
         "successes": 0,
         "partials": 0,
-        "failures": 25,
+        "failures": 70,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.979246",
+        "last_used": "2026-06-29T14:03:13.224460",
         "payloads_used": [
           {
             "payload": "",
@@ -1426,17 +2482,287 @@
             "result": "Alta",
             "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
             "timestamp": "2026-06-17T13:57:58.979262"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T12:39:10.537329"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T12:39:10.544901"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-22T12:39:10.551338"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T12:39:10.557871"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-22T12:39:10.565066"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T13:42:47.153663"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T13:42:47.162524"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-22T13:42:47.170541"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T13:42:47.179502"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-22T13:42:47.188490"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T14:24:33.300362"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T14:24:33.309699"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-22T14:24:33.318036"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-22T14:24:33.326299"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-22T14:24:33.334348"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T09:32:11.374715"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T09:32:11.377991"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T09:32:11.381148"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T09:32:11.384708"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T09:32:11.387854"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T10:05:19.063197"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T10:05:19.065873"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T10:05:19.068870"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T10:05:19.073436"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T10:05:19.077133"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T12:31:18.533756"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T12:31:18.545379"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T12:31:18.555161"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T12:31:18.564932"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T12:31:18.577343"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T13:07:17.052355"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T13:07:17.061035"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T13:07:17.068079"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T13:07:17.077350"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T13:07:17.084218"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T13:36:42.235286"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T13:36:42.243687"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T13:36:42.254115"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T13:36:42.264062"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T13:36:42.273141"
+          },
+          {
+            "payload": "",
+            "result": "Media",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T14:03:13.180055"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T14:03:13.195458"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T14:03:13.204276"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Se detectaron fuentes controlables por usuario y sinks peligrosos en el mismo recurso JavaScript.",
+            "timestamp": "2026-06-29T14:03:13.213000"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Uso de bypassSecurityTrust puede anular protecciones de sanitización de Angular.",
+            "timestamp": "2026-06-29T14:03:13.224492"
           }
         ]
       },
       "Exposición de dependencias": {
-        "attempts": 20,
+        "attempts": 56,
         "successes": 0,
         "partials": 0,
-        "failures": 20,
+        "failures": 56,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.992834",
+        "last_used": "2026-06-29T14:03:13.261103",
         "payloads_used": [
           {
             "payload": "",
@@ -1557,17 +2883,233 @@
             "result": "Alta",
             "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
             "timestamp": "2026-06-17T13:57:58.992843"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T12:39:10.570779"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T12:39:10.578507"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T12:39:10.584937"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T12:39:10.593018"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T13:42:47.197046"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T13:42:47.203855"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T13:42:47.211591"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T13:42:47.218673"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T14:24:33.347300"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T14:24:33.357625"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T14:24:33.364769"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-22T14:24:33.371155"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T09:32:11.390991"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T09:32:11.395448"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T09:32:11.398811"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T09:32:11.405820"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T10:05:19.079957"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T10:05:19.082705"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T10:05:19.087378"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T10:05:19.091890"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T12:31:18.589798"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T12:31:18.601533"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T12:31:18.609845"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T12:31:18.625376"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:07:17.093826"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:07:17.101191"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:07:17.112828"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:07:17.122148"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:36:42.282128"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:36:42.291228"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:36:42.298322"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T13:36:42.310110"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T14:03:13.233182"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T14:03:13.242933"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T14:03:13.252058"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "Archivo source map expuesto públicamente. Puede revelar código fuente frontend.",
+            "timestamp": "2026-06-29T14:03:13.261127"
           }
         ]
       },
       "Aseguramiento ofensivo": {
-        "attempts": 5,
+        "attempts": 14,
         "successes": 0,
         "partials": 0,
-        "failures": 5,
+        "failures": 14,
         "blocked": 0,
         "avg_time_ms": 0.0,
-        "last_used": "2026-06-17T13:57:58.996053",
+        "last_used": "2026-06-29T14:03:13.271542",
         "payloads_used": [
           {
             "payload": "",
@@ -1598,6 +3140,60 @@
             "result": "Alta",
             "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
             "timestamp": "2026-06-17T13:57:58.996073"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-22T12:39:10.601946"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-22T13:42:47.226997"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-22T14:24:33.378757"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-29T09:32:11.412951"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-29T10:05:19.095645"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-29T12:31:18.633864"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-29T13:07:17.129241"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-29T13:36:42.318112"
+          },
+          {
+            "payload": "",
+            "result": "Alta",
+            "reason": "La validación ofensiva identificó controles vulnerables. El activo no puede etiquetarse como seguro.",
+            "timestamp": "2026-06-29T14:03:13.271571"
           }
         ]
       }
@@ -1611,7 +3207,7 @@
       "filters": [],
       "waf_types": [],
       "attack_results": {},
-      "last_scanned": "2026-06-17T13:57:58.831147"
+      "last_scanned": "2026-06-29T14:03:13.009309"
     }
   },
   "technology_stack_vectors": {}
